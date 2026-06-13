@@ -370,8 +370,13 @@ table.data-table tr:hover td{background:var(--blue-50)}
       <div id="login-step-2" style="display:none">
         <button onclick="loginBackToRole()" style="display:inline-flex;align-items:center;gap:5px;background:none;border:none;color:var(--blue-600);font-size:12px;font-weight:600;cursor:pointer;padding:0;margin-bottom:14px"><i class="ti ti-arrow-left"></i>Ganti role</button>
         <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Pilih Nama Anda</div>
+        <div style="position:relative;margin-bottom:10px">
+          <i class="ti ti-search" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--gray-400);font-size:15px"></i>
+          <input type="text" id="login-nama-search" placeholder="Cari nama..." oninput="filterLoginNamaList()" style="width:100%;padding:9px 12px 9px 36px;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:13px;font-family:var(--font)"/>
+        </div>
         <div id="login-nama-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;padding-right:2px"></div>
         <div id="l-err-nama" style="font-size:12px;color:var(--red);margin-top:8px;display:none;align-items:center;gap:5px"><i class="ti ti-alert-circle"></i> Tidak ada akun untuk role ini</div>
+        <div id="l-err-search" style="font-size:12px;color:var(--gray-400);margin-top:8px;display:none;align-items:center;gap:5px;justify-content:center;padding:12px 0"><i class="ti ti-search-off"></i> Tidak ada nama yang cocok</div>
       </div>
 
       <!-- LANGKAH 3: Input Password -->
@@ -676,6 +681,7 @@ function showToast(msg, type) {
 // ==================== LOGIN ====================
 var loginSelectedRole  = null;  // 'hrd' | 'koor' | 'kary'
 var loginSelectedEmail = null;  // email akun yang dipilih
+var loginNamaListCache = [];    // cache daftar akun untuk filter pencarian nama
 
 var ROLE_LABEL = { hrd:'HRD', koor:'Koordinator', kary:'Karyawan' };
 var ROLE_ICON  = { hrd:'ti-building-bank', koor:'ti-user-star', kary:'ti-user' };
@@ -701,37 +707,83 @@ function loginPilihRole(role, el) {
     return entry[1].roles && entry[1].roles.some(function(r){ return r.role === role; });
   });
 
+  loginNamaListCache = list; // simpan untuk filter pencarian
+
   var listEl = document.getElementById('login-nama-list');
   var errEl  = document.getElementById('l-err-nama');
+  var searchEl = document.getElementById('login-nama-search');
+  var searchErrEl = document.getElementById('l-err-search');
+  if (searchEl) searchEl.value = '';
+  if (searchErrEl) searchErrEl.style.display = 'none';
 
   if (!list.length) {
     listEl.innerHTML = '';
     errEl.style.display = 'flex';
+    if (searchEl) searchEl.style.display = 'none';
   } else {
     errEl.style.display = 'none';
-    listEl.innerHTML = list.map(function(entry) {
-      var email = entry[0];
-      var u     = entry[1];
-      var initials = u.initials || (u.name||'?').split(' ').map(function(x){return x[0]||'';}).join('').slice(0,2).toUpperCase();
-      var bg = u.avBg || ROLE_COLOR[role];
-      return '<button onclick="loginPilihNama(\'' + email.replace(/'/g,"\\'") + '\')" ' +
-        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1.5px solid var(--gray-200);border-radius:var(--radius);background:#fff;cursor:pointer;text-align:left;transition:all .15s;font-family:var(--font)" ' +
-        'onmouseenter="this.style.borderColor=\'var(--blue-400)\';this.style.background=\'var(--blue-50)\'" ' +
-        'onmouseleave="this.style.borderColor=\'var(--gray-200)\';this.style.background=\'#fff\'">' +
-        '<div style="width:36px;height:36px;border-radius:50%;background:' + bg + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">' + initials + '</div>' +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:14px;font-weight:600;color:var(--gray-800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (u.name||email) + '</div>' +
-          '<div style="font-size:11px;color:var(--gray-400);margin-top:1px">' + ROLE_LABEL[role] + '</div>' +
-        '</div>' +
-        '<i class="ti ti-chevron-right" style="font-size:16px;color:var(--gray-300);flex-shrink:0"></i>' +
-      '</button>';
-    }).join('');
+    if (searchEl) searchEl.style.display = 'block';
+    renderLoginNamaList(list);
   }
 
   // Animasi: step1 → step2
   document.getElementById('login-step-1').style.display = 'none';
   document.getElementById('login-step-2').style.display = 'block';
   document.getElementById('login-step-3').style.display = 'none';
+}
+
+// Render daftar nama (dipakai oleh loginPilihRole & filterLoginNamaList)
+function renderLoginNamaList(list) {
+  var role = loginSelectedRole;
+  var listEl = document.getElementById('login-nama-list');
+  listEl.innerHTML = list.map(function(entry) {
+    var email = entry[0];
+    var u     = entry[1];
+    var initials = u.initials || (u.name||'?').split(' ').map(function(x){return x[0]||'';}).join('').slice(0,2).toUpperCase();
+    var bg = u.avBg || ROLE_COLOR[role];
+    return '<button onclick="loginPilihNama(\'' + email.replace(/'/g,"\\'") + '\')" ' +
+      'style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1.5px solid var(--gray-200);border-radius:var(--radius);background:#fff;cursor:pointer;text-align:left;transition:all .15s;font-family:var(--font)" ' +
+      'onmouseenter="this.style.borderColor=\'var(--blue-400)\';this.style.background=\'var(--blue-50)\'" ' +
+      'onmouseleave="this.style.borderColor=\'var(--gray-200)\';this.style.background=\'#fff\'">' +
+      '<div style="width:36px;height:36px;border-radius:50%;background:' + bg + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">' + initials + '</div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:14px;font-weight:600;color:var(--gray-800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (u.name||email) + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-400);margin-top:1px">' + ROLE_LABEL[role] + '</div>' +
+      '</div>' +
+      '<i class="ti ti-chevron-right" style="font-size:16px;color:var(--gray-300);flex-shrink:0"></i>' +
+    '</button>';
+  }).join('');
+}
+
+// Filter daftar nama berdasarkan input pencarian (cocok di awal kata mana pun dalam nama)
+function filterLoginNamaList() {
+  var q = (document.getElementById('login-nama-search')?.value || '').trim().toLowerCase();
+  var searchErrEl = document.getElementById('l-err-search');
+  var listEl = document.getElementById('login-nama-list');
+
+  if (!q) {
+    renderLoginNamaList(loginNamaListCache);
+    if (searchErrEl) searchErrEl.style.display = 'none';
+    return;
+  }
+
+  var filtered = loginNamaListCache.filter(function(entry) {
+    var u = entry[1];
+    var email = entry[0];
+    var nama = (u.name || email || '').toLowerCase();
+    // Cocok jika ada kata dalam nama yang DIMULAI dengan huruf yang diketik
+    return nama.split(/\s+/).some(function(word){ return word.indexOf(q) === 0; })
+      || nama.indexOf(q) === 0
+      || email.toLowerCase().indexOf(q) === 0;
+  });
+
+  if (!filtered.length) {
+    listEl.innerHTML = '';
+    if (searchErrEl) searchErrEl.style.display = 'flex';
+  } else {
+    if (searchErrEl) searchErrEl.style.display = 'none';
+    renderLoginNamaList(filtered);
+  }
 }
 
 function loginPilihNama(email) {
@@ -1445,9 +1497,20 @@ function buildHRD(id) {
       /* clear stale status on next tick */
       '<script>setTimeout(function(){var el=document.getElementById("import-akun-status");if(el)el.textContent="";},50);<\/script>' +
 
+      /* ---- FILTER ---- */
+      '<div class="card" id="akun-filter-card"><div class="card-head"><i class="ti ti-filter" style="color:var(--blue-600)"></i><h2>Filter & Pencarian</h2></div>' +
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px" class="filter-grid">' +
+        '<div class="field" style="margin:0"><label>Cari Nama / Email</label><input type="text" id="akf-q" placeholder="Ketik nama atau email..." oninput="applyAkunFilter()"/></div>' +
+        '<div class="field" style="margin:0"><label>Role</label><select id="akf-role" onchange="applyAkunFilter()"><option value="">Semua Role</option><option value="hrd">HRD</option><option value="koor">Koordinator</option><option value="kary">Karyawan</option></select></div>' +
+        '<div class="field" style="margin:0"><label>Status</label><select id="akf-status" onchange="applyAkunFilter()"><option value="">Semua Status</option><option value="lengkap">Lengkap</option><option value="belum">Belum Lengkap</option></select></div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="resetAkunFilter()"><i class="ti ti-refresh"></i>Reset Filter</button></div>' +
+      '</div>' +
+
       /* ---- DAFTAR AKUN ---- */
-      '<div class="card"><div class="card-head"><i class="ti ti-shield-check" style="color:var(--blue-600)"></i><h2>Daftar Akun (' + userList.length + ')</h2></div>' +
-      '<table class="data-table"><thead><tr><th>Pengguna</th><th>Role & Password</th><th>Aksi</th></tr></thead><tbody>' +
+      '<div class="card"><div class="card-head"><i class="ti ti-shield-check" style="color:var(--blue-600)"></i><h2>Daftar Akun (<span id="akun-count">' + userList.length + '</span>)</h2></div>' +
+      '<div id="akun-empty-filter" style="display:none;text-align:center;padding:24px;color:var(--gray-400);font-size:13px"><i class="ti ti-search" style="font-size:28px;display:block;margin-bottom:8px"></i>Tidak ada akun yang cocok dengan filter</div>' +
+      '<table class="data-table" id="akun-table"><thead><tr><th>Pengguna</th><th>Role & Password</th><th>Aksi</th></tr></thead><tbody id="akun-tbody">' +
       userList.map(function(entry) {
         var em = entry[0], u = entry[1];
         var safeId = em.replace(/[@.]/g,'_');
@@ -1461,7 +1524,9 @@ function buildHRD(id) {
             (u.roles.length > 1 ? '<button onclick="hapusRole(\'' + em + '\',' + ri + ')" style="padding:5px 8px;background:var(--red-light);color:var(--red);border:1px solid #fca5a5;border-radius:var(--radius);cursor:pointer;font-size:11px"><i class="ti ti-x"></i></button>' : '') +
           '</div>';
         }).join('');
-        return '<tr>' +
+        var rolesStr = u.roles.map(function(r){return r.role;}).join(',');
+        var searchStr = ((u.name||'') + ' ' + em).toLowerCase();
+        return '<tr data-search="' + searchStr.replace(/"/g,'&quot;') + '" data-roles="' + rolesStr + '" data-status="' + (belumLengkap?'belum':'lengkap') + '">' +
           '<td><div style="display:flex;align-items:center;gap:8px">' +
             '<div class="av" style="background:' + u.avBg + ';color:' + u.avColor + ';width:30px;height:30px;font-size:11px">' + u.initials + '</div>' +
             '<div><div style="font-weight:600">' + (u.name || em) + (belumLengkap ? ' <span class="badge badge-amber" style="margin-left:6px"><i class="ti ti-clock-pause"></i>Belum Lengkap</span>' : '') + '</div>' +
@@ -3352,6 +3417,36 @@ function resetFilter() {
     if (el) el.value='';
   });
   applyFilter();
+}
+
+// ==================== FILTER MANAJEMEN AKUN ====================
+function applyAkunFilter() {
+  var q      = (document.getElementById('akf-q')?.value||'').toLowerCase();
+  var role   = document.getElementById('akf-role')?.value||'';
+  var status = document.getElementById('akf-status')?.value||'';
+  var rows   = document.querySelectorAll('#akun-tbody tr');
+  var visible = 0;
+  rows.forEach(function(row) {
+    var ok = true;
+    if (q      && !row.dataset.search.includes(q))                          ok=false;
+    if (role   && !row.dataset.roles.split(',').includes(role))             ok=false;
+    if (status && row.dataset.status !== status)                            ok=false;
+    row.style.display = ok ? '' : 'none';
+    if (ok) visible++;
+  });
+  var countEl = document.getElementById('akun-count');
+  if (countEl) countEl.textContent = visible;
+  var empty = document.getElementById('akun-empty-filter');
+  var tbl   = document.getElementById('akun-table');
+  if (empty && tbl) { empty.style.display = visible?'none':'block'; tbl.style.display = visible?'':'none'; }
+}
+
+function resetAkunFilter() {
+  ['akf-q','akf-role','akf-status'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.value='';
+  });
+  applyAkunFilter();
 }
 
 // ==================== SELECT & HAPUS ====================
