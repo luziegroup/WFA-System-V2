@@ -2106,7 +2106,19 @@ function buildKOOR(id) {
     );
   }
 
-  if (id === 'monitor') return (
+  if (id === 'monitor') {
+    // Pastikan skor harian terbaru sebelum ditampilkan (auto-sync jika ada data to-do/absen yang belum dihitung)
+    var skorBerubah = false;
+    timku.forEach(function(e){
+      var aKey = attendKey(e.email);
+      var before = JSON.stringify((DB.attendance[aKey]||{}).skor);
+      hitungSkorHarian(e.email, aKey);
+      var after = JSON.stringify((DB.attendance[aKey]||{}).skor);
+      if (before !== after) skorBerubah = true;
+    });
+    if (skorBerubah) dbSave(DB);
+
+    return (
     '<div class="page-header"><h1>Monitor To-Do List ' + rtBadge() + '</h1><p>Pantau & verifikasi tugas anggota tim Anda</p></div>' +
     '<div class="info-bar info-blue"><i class="ti ti-info-circle"></i>Anda dapat memberi komentar dan mengoreksi skor setiap item to-do, serta menilai komunikasi anggota tim hari ini.</div>' +
     timku.map(function(e) {
@@ -2152,17 +2164,18 @@ function buildKOOR(id) {
                 var itemId   = tkKey + '_' + i;
                 var koreksi  = (t.koreksi_skor !== null && t.koreksi_skor !== undefined) ? t.koreksi_skor : null;
                 var komentar = t.komentar_koor || '';
-                var skorTampil = koreksi !== null ? koreksi : t.score;
+                var hasScore = (t.score !== null && t.score !== undefined);
+                var skorTampil = koreksi !== null ? koreksi : (hasScore ? t.score : null);
                 var skorWarna  = skorTampil >= 80 ? 'var(--green)' : skorTampil >= 60 ? 'var(--amber)' : skorTampil !== null ? 'var(--red)' : 'var(--gray-400)';
 
                 return '<div style="border:1px solid var(--gray-100);border-radius:var(--radius);padding:12px;margin-bottom:8px">' +
 
                   // Baris utama: tugas + skor
                   '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-                    '<i class="ti ' + (t.score!==null?'ti-check-circle':'ti-circle') + '" style="font-size:16px;color:' + (t.score!==null?'var(--green)':'var(--gray-300)') + ';flex-shrink:0"></i>' +
+                    '<i class="ti ' + (hasScore?'ti-check-circle':'ti-circle') + '" style="font-size:16px;color:' + (hasScore?'var(--green)':'var(--gray-300)') + ';flex-shrink:0"></i>' +
                     '<div style="flex:1;font-size:13px;color:var(--gray-800)">' + t.task + '</div>' +
                     '<div style="display:flex;align-items:center;gap:6px">' +
-                      (t.score !== null
+                      (hasScore
                         ? '<span style="font-size:11px;color:var(--gray-400)">Staff:</span><span style="font-weight:600;font-size:13px;color:var(--gray-600)">' + t.score + '</span>'
                         : '<span style="font-size:12px;color:var(--gray-400)">—</span>'
                       ) +
@@ -2182,9 +2195,9 @@ function buildKOOR(id) {
                         'oninput="this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'">' + komentar + '</textarea>' +
                     '</div>' +
                     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-                      '<span style="font-size:12px;color:var(--gray-500);flex-shrink:0">Koreksi skor:</span>' +
+                      '<span style="font-size:12px;color:var(--gray-500);flex-shrink:0">' + (hasScore ? 'Koreksi skor:' : 'Beri skor (karyawan belum menilai):') + '</span>' +
                       '<select id="kor-' + itemId + '" style="padding:6px 10px;border:1.5px solid var(--gray-200);border-radius:6px;font-size:12px;background:#fff;color:var(--gray-700)">' +
-                        '<option value="">Tidak dikoreksi</option>' +
+                        '<option value="">' + (hasScore ? 'Tidak dikoreksi' : 'Pilih skor') + '</option>' +
                         [100,90,80,70,60,50,40,30,20,10,0].map(function(s){
                           return '<option value="' + s + '" ' + (koreksi===s?'selected':'') + '>' + s + '</option>';
                         }).join('') +
@@ -2229,7 +2242,8 @@ function buildKOOR(id) {
 
       '</div>';
     }).join('')
-  );
+    );
+  }
 
   if (id === 'teguran') return (
     '<div class="page-header"><h1>Kirim Teguran</h1><p>Berikan teguran kepada anggota tim</p></div>' +
@@ -2653,6 +2667,45 @@ function buildKARY(id) {
       notifs.push({type:'info', icon:'ti-star', title:'Beri Skor To-Do List', msg:'Anda sudah absen siang. Jangan lupa beri penilaian skor untuk to-do list pagi Anda.', aksi:'Beri Skor', page:'todo', time:'Hari ini'});
     }
 
+    // --- Notif komentar/koreksi koordinator pada to-do hari ini ---
+    todoToday.forEach(function(t) {
+      var adaKoreksi = (t.koreksi_skor !== null && t.koreksi_skor !== undefined);
+      var adaKomentar = !!(t.komentar_koor && t.komentar_koor.trim());
+      if (adaKoreksi || adaKomentar) {
+        var msgParts = [];
+        if (adaKomentar) msgParts.push('"' + t.komentar_koor + '"');
+        if (adaKoreksi)  msgParts.push('Skor dikoreksi menjadi ' + t.koreksi_skor + (t.score!=null ? ' (sebelumnya ' + t.score + ')' : ''));
+        notifs.push({
+          type: adaKoreksi && t.koreksi_skor < (t.score!=null?t.score:100) ? 'warning' : 'blue',
+          icon: 'ti-message-circle-2',
+          title: 'Catatan Koordinator: ' + t.task,
+          msg: msgParts.join(' · ') + (t.koor_edit_by ? ' — oleh ' + t.koor_edit_by : ''),
+          aksi: 'Lihat To-Do', page: 'todo',
+          time: 'Hari ini' + (t.koor_edit_time ? ' · ' + t.koor_edit_time : '')
+        });
+      }
+    });
+
+    // --- Notif komentar/koreksi koordinator pada to-do kemarin (jika belum sempat dilihat) ---
+    var kemarinAKey = encEmail + '_' + (function(){ var d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().split('T')[0]; })();
+    var todoKemarin = (DB.todos[kemarinAKey] || []).filter(function(t){ return t.task&&t.task.trim(); });
+    todoKemarin.forEach(function(t) {
+      var adaKoreksi = (t.koreksi_skor !== null && t.koreksi_skor !== undefined);
+      var adaKomentar = !!(t.komentar_koor && t.komentar_koor.trim());
+      if (adaKoreksi || adaKomentar) {
+        var msgParts = [];
+        if (adaKomentar) msgParts.push('"' + t.komentar_koor + '"');
+        if (adaKoreksi)  msgParts.push('Skor dikoreksi menjadi ' + t.koreksi_skor + (t.score!=null ? ' (sebelumnya ' + t.score + ')' : ''));
+        notifs.push({
+          type: 'blue', icon: 'ti-message-circle-2',
+          title: 'Catatan Koordinator (Kemarin): ' + t.task,
+          msg: msgParts.join(' · ') + (t.koor_edit_by ? ' — oleh ' + t.koor_edit_by : ''),
+          aksi: 'Lihat Riwayat', page: 'riwayat',
+          time: 'Kemarin'
+        });
+      }
+    });
+
     // --- Notif zoom meeting ---
     if (myEmp) {
       var zoomHariIni = (DB.zoomMeetings||[]).filter(function(m){ return m.koor===myEmp.koor && m.tanggal===today; });
@@ -3066,13 +3119,24 @@ var myTodos = [{task:'',score:null},{task:'',score:null},{task:'',score:null}];
 function loadMyTodos() {
   var aKey = attendKey(currentUser.email);
   var saved = DB.todos[aKey];
-  if (saved && saved.length) { myTodos = saved.map(function(t){ return {task:t.task,score:t.score}; }); }
+  if (saved && saved.length) { myTodos = saved.map(function(t){ return {task:t.task, score:(t.score===undefined?null:t.score)}; }); }
   else { myTodos = [{task:'',score:null},{task:'',score:null},{task:'',score:null}]; }
 }
 
 function saveMyTodos() {
   var aKey = attendKey(currentUser.email);
-  DB.todos[aKey] = myTodos.map(function(t){ return {task:t.task,score:t.score}; });
+  var existing = DB.todos[aKey] || [];
+  DB.todos[aKey] = myTodos.map(function(t,i) {
+    var prev = existing[i] || {};
+    return {
+      task: t.task,
+      score: (t.score===undefined?null:t.score),
+      koreksi_skor: (prev.koreksi_skor!==undefined ? prev.koreksi_skor : null),
+      komentar_koor: prev.komentar_koor || '',
+      koor_edit_by: prev.koor_edit_by,
+      koor_edit_time: prev.koor_edit_time
+    };
+  });
   dbSave(DB);
 }
 
@@ -3149,7 +3213,8 @@ function renderTodoFull() {
         f.map(function(t, i) {
           var koreksi  = (t.koreksi_skor !== null && t.koreksi_skor !== undefined) ? t.koreksi_skor : null;
           var komentar = t.komentar_koor || '';
-          var skorAkhir = koreksi !== null ? koreksi : t.score;
+          var hasScore = (t.score !== null && t.score !== undefined);
+          var skorAkhir = koreksi !== null ? koreksi : (hasScore ? t.score : null);
           var skorWarna = skorAkhir >= 80 ? 'var(--green)' : skorAkhir >= 60 ? 'var(--amber)' : skorAkhir !== null ? 'var(--red)' : 'var(--gray-400)';
 
           return '<div style="border:1px solid var(--gray-100);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">' +
@@ -3157,7 +3222,7 @@ function renderTodoFull() {
               '<span style="font-size:12px;color:var(--gray-400);min-width:18px">' + (i+1) + '.</span>' +
               '<span style="flex:1;font-size:13px;color:var(--gray-700)">' + t.task + '</span>' +
               '<div style="display:flex;align-items:center;gap:5px">' +
-                (t.score !== null
+                (hasScore
                   ? '<span style="font-size:12px;color:var(--gray-400)">Skor saya: ' + t.score + '</span>'
                   : '<span class="badge badge-gray">Belum dinilai</span>'
                 ) +
@@ -3268,12 +3333,13 @@ function renderSkorList() {
   var f = myTodos.filter(function(t){ return t.task.trim(); });
   if (!f.length) { c.innerHTML='<div style="font-size:13px;color:var(--gray-400)">Isi dan kirim to-do list pagi terlebih dahulu</div>'; return; }
   c.innerHTML = f.map(function(t,i) {
+    var hasScore = (t.score !== null && t.score !== undefined);
     return '<div class="todo-item">' +
-      '<i class="ti ' + (t.score?'ti-check-circle':'ti-circle') + '" style="font-size:16px;color:' + (t.score?'var(--green)':'var(--gray-300)') + '"></i>' +
+      '<i class="ti ' + (hasScore?'ti-check-circle':'ti-circle') + '" style="font-size:16px;color:' + (hasScore?'var(--green)':'var(--gray-300)') + '"></i>' +
       '<div style="flex:1;font-size:13px">' + t.task + '</div>' +
       '<select style="width:80px;padding:7px 6px;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:13px;font-family:var(--font)" onchange="setSkor(' + i + ',this.value)">' +
         '<option value="">Skor</option>' +
-        [100,90,80,70,60,50,0].map(function(s){ return '<option value="'+s+'" '+(t.score===s?'selected':'')+'>'+s+'</option>'; }).join('') +
+        [100,90,80,70,60,50,0].map(function(s){ return '<option value="'+s+'" '+(hasScore && t.score===s?'selected':'')+'>'+s+'</option>'; }).join('') +
       '</select></div>';
   }).join('');
   updateAvgSkor();
@@ -3286,13 +3352,13 @@ function setSkor(i, v) {
 }
 
 function updateAvgSkor() {
-  var scores = myTodos.filter(function(t){ return t.score!==null; }).map(function(t){ return t.score; });
+  var scores = myTodos.filter(function(t){ return t.score !== null && t.score !== undefined; }).map(function(t){ return t.score; });
   var avg = document.getElementById('avg-skor');
   if (avg) avg.textContent = scores.length ? Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length) : '—';
 }
 
 function submitSkor() {
-  var f = myTodos.filter(function(t){ return t.task.trim()&&t.score!==null; });
+  var f = myTodos.filter(function(t){ return t.task.trim() && t.score !== null && t.score !== undefined; });
   if (!f.length) { showToast('Isi skor minimal satu tugas','error'); return; }
   saveMyTodos();
   hitungSkorHarian(currentUser.email, attendKey(currentUser.email));
