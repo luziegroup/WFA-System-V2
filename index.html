@@ -637,14 +637,15 @@ function saveUsers(data) {
 }
 
 function todayKey() { return new Date().toISOString().split('T')[0]; }
-function attendKey(email) { return email.replace(/[.#$\[\]]/g,'_') + '_' + todayKey(); }
-function attendKeyFor(email, dateKey) { return email.replace(/[.#$\[\]]/g,'_') + '_' + dateKey; }
+// BUGFIX: email selalu dilowercase sebelum encode agar key konsisten antar semua operasi
+function attendKey(email) { return (email||'').toLowerCase().replace(/[.#$\[\]]/g,'_') + '_' + todayKey(); }
+function attendKeyFor(email, dateKey) { return (email||'').toLowerCase().replace(/[.#$\[\]]/g,'_') + '_' + dateKey; }
 
 // Cari email karyawan dari attendance key (key = sanitizedEmail_YYYY-MM-DD)
 function emailFromAttendKey(aKey) {
-  // Coba cocokkan dengan email karyawan yang ada (sanitasi & bandingkan prefix)
+  // BUGFIX: bandingkan dengan lowercase email agar konsisten dengan attendKey()
   var match = DB.employees.find(function(e) {
-    var prefix = e.email.replace(/[.#$\[\]]/g,'_') + '_';
+    var prefix = (e.email||'').toLowerCase().replace(/[.#$\[\]]/g,'_') + '_';
     return aKey.startsWith(prefix);
   });
   return match ? match.email : null;
@@ -717,10 +718,11 @@ function updateAvgSkorBulanan(email) {
   if (!emp) return;
 
   var bulanIni = todayKey().slice(0,7); // YYYY-MM
+  var encEmail = (email||'').toLowerCase().replace(/[.#$\[\]]/g,'_'); // BUGFIX: lowercase
   var skorArr = [];
   Object.keys(DB.attendance).forEach(function(k) {
-    if (!k.startsWith(email.replace(/[.#$\[\]]/g,'_') + '_')) return;
-    var tgl = k.slice((email.replace(/[.#$\[\]]/g,'_') + '_').length);
+    if (!k.startsWith(encEmail + '_')) return;
+    var tgl = k.slice((encEmail + '_').length);
     if (!tgl.startsWith(bulanIni)) return;
     var r = DB.attendance[k];
     if (r.skor !== null && r.skor !== undefined) skorArr.push(r.skor);
@@ -740,9 +742,10 @@ function evaluasiPerformaOtomatis(emp, skorArrBulanIni) {
   if (!skorArrBulanIni.length) return;
 
   // Hitung berapa hari TERAKHIR berturut-turut skor < minSkor
-  var email = emp.email;
+  var email = (emp.email||'').toLowerCase(); // BUGFIX: lowercase
+  var encEmailEval = email.replace(/[.#$\[\]]/g,'_');
   var allDates = Object.keys(DB.attendance)
-    .filter(function(k){ return k.startsWith(email.replace(/[.#$\[\]]/g,'_') + '_'); })
+    .filter(function(k){ return k.startsWith(encEmailEval + '_'); })
     .map(function(k){ return { key:k, tgl:k.slice((email.replace(/[.#$\[\]]/g,'_') + '_').length), rec:DB.attendance[k] }; })
     .filter(function(x){ return x.rec.skor !== null && x.rec.skor !== undefined; })
     .sort(function(a,b){ return a.tgl < b.tgl ? 1 : -1; }); // terbaru dulu
@@ -1043,7 +1046,7 @@ function togglePassVis() {
 function fillLogin(role, el) { loginPilihRole(role, el); }
 
 function doLogin() {
-  var email = loginSelectedEmail;
+  var email = (loginSelectedEmail || '').toLowerCase().trim();
   var pass  = document.getElementById('l-pass').value;
   var role  = loginSelectedRole;
   var errEl = document.getElementById('l-err');
@@ -1149,7 +1152,7 @@ function simpanSetupProfile() {
   }
   errEl.style.display = 'none';
 
-  var email = currentUser.email;
+  var email = (currentUser.email || '').toLowerCase().trim();
   var u = USERS[email];
 
   var initials = nama.split(' ').map(function(x){ return x[0]||''; }).join('').slice(0,2).toUpperCase();
@@ -1677,7 +1680,7 @@ function buildHRD(id) {
 
     // Hitung statistik real per karyawan
     var empStats = emps.map(function(emp) {
-      var encEm = emp.email.replace(/[.#$\[\]]/g,'_');
+      var encEm = (emp.email||'').toLowerCase().replace(/[.#$\[\]]/g,'_'); // BUGFIX: lowercase
       var keys  = Object.keys(DB.attendance).filter(function(k){
         return k.startsWith(encEm+'_') && k.indexOf(thisMonth)>=0;
       });
@@ -3013,7 +3016,7 @@ function exportLaporan() {
     : DB.employees;
   var header = 'nama,divisi,koordinator,hadir,terlambat,tidak_lengkap,avg_skor,status';
   var rows = targetEmps.map(function(emp){
-    var encEm=emp.email.replace(/[.#$\[\]]/g,'_');
+    var encEm=(emp.email||'').toLowerCase().replace(/[.#$\[\]]/g,'_'); // BUGFIX: lowercase
     var keys=Object.keys(DB.attendance).filter(function(k){return k.startsWith(encEm+'_')&&k.indexOf(thisMonth)>=0;});
     var hadir=0,terlambat=0,tdk=0,skorArr=[];
     keys.forEach(function(k){var r=DB.attendance[k];if(r.pagi&&r.siang){if(r.status==='terlambat')terlambat++;else hadir++;}else if(r.pagi||r.siang)tdk++;if(r.skor!=null)skorArr.push(Number(r.skor));});
@@ -3083,10 +3086,15 @@ function karyAbsenPagi() {
   DB.attendance[aKey].lokasi = lok.value.trim();
   DB.attendance[aKey].status = late?'terlambat':'hadir';
   DB.attendance[aKey].gps    = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
-  var empIdx = DB.employees.findIndex(function(e){ return e.email===currentUser.email; });
+  var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
   if (empIdx>=0) { DB.employees[empIdx].status=late?'terlambat':'hadir'; DB.employees[empIdx].pagi=ts; }
   hitungSkorHarian(currentUser.email, aKey);
-  dbSave(DB);
+
+  // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
+  dbSaveLocal(DB);
+  dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
+  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
+  if (bc) bc.postMessage({ type:'update', data: DB });
 
   // Tampilkan modal sukses → arahkan ke to-do list
   showAbsenSuksesModal(ts, late, 'pagi');
@@ -3101,9 +3109,14 @@ function karyAbsenSiang() {
   DB.attendance[aKey] = DB.attendance[aKey] || {};
   DB.attendance[aKey].siang = ts;
   DB.attendance[aKey].gps_siang = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
-  var empIdx = DB.employees.findIndex(function(e){ return e.email===currentUser.email; });
+  var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
   if (empIdx>=0) DB.employees[empIdx].siang = ts;
-  dbSave(DB);
+
+  // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
+  dbSaveLocal(DB);
+  dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
+  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
+  if (bc) bc.postMessage({ type:'update', data: DB });
 
   showAbsenSuksesModal(ts, false, 'siang');
 }
@@ -3172,14 +3185,28 @@ var myTodos = [{task:'',score:null},{task:'',score:null},{task:'',score:null}];
 function loadMyTodos() {
   var aKey = attendKey(currentUser.email);
   var saved = DB.todos[aKey];
-  if (saved && saved.length) { myTodos = saved.map(function(t){ return {task:t.task, score:(t.score===undefined?null:t.score)}; }); }
-  else { myTodos = [{task:'',score:null},{task:'',score:null},{task:'',score:null}]; }
+  if (saved && saved.length) {
+    // BUGFIX: copy semua field penting agar koreksi/komentar koordinator ikut terbawa di myTodos
+    myTodos = saved.map(function(t) {
+      return {
+        task:          t.task || '',
+        score:         (t.score === undefined ? null : t.score),
+        koreksi_skor:  (t.koreksi_skor !== undefined ? t.koreksi_skor : null),
+        komentar_koor: t.komentar_koor || '',
+        koor_edit_by:  t.koor_edit_by  || '',
+        koor_edit_time:t.koor_edit_time|| ''
+      };
+    });
+  } else {
+    myTodos = [{task:'',score:null},{task:'',score:null},{task:'',score:null}];
+  }
 }
 
 function saveMyTodos() {
   var aKey = attendKey(currentUser.email);
+  // BUGFIX: baca existing langsung dari DB (bukan snapshot lama) agar koreksi koordinator tidak tertimpa
   var existing = DB.todos[aKey] || [];
-  DB.todos[aKey] = myTodos.map(function(t,i) {
+  var newTodos = myTodos.map(function(t,i) {
     var prev = existing[i] || {};
     var item = {
       task:         t.task || '',
@@ -3187,12 +3214,15 @@ function saveMyTodos() {
       koreksi_skor: (prev.koreksi_skor !== null && prev.koreksi_skor !== undefined) ? prev.koreksi_skor : null,
       komentar_koor: prev.komentar_koor || ''
     };
-    // Hanya tambahkan field opsional jika ada nilainya (Firebase tolak undefined)
     if (prev.koor_edit_by)   item.koor_edit_by   = prev.koor_edit_by;
     if (prev.koor_edit_time) item.koor_edit_time = prev.koor_edit_time;
     return item;
   });
-  dbSave(DB);
+  DB.todos[aKey] = newTodos;
+  // BUGFIX: simpan hanya path todos/aKey ke Firebase (bukan seluruh DB) → cegah race condition
+  dbSaveLocal(DB);
+  dbSavePath('todos/' + aKey, cleanForFirebase(newTodos));
+  if (bc) bc.postMessage({ type:'update', data: DB });
 }
 
 function renderTodoFull() {
@@ -3615,11 +3645,11 @@ function addKaryawan() {
   if (!nama) { showToast('Nama wajib diisi','error'); return; }
   if (!pass || pass.length < 6) { showToast('Password minimal 6 karakter','error'); return; }
 
-  // Generate email otomatis dari nama
-  var email = namaToEmail(nama);
+  // Generate email otomatis dari nama — selalu lowercase
+  var email = namaToEmail(nama).toLowerCase().trim();
 
   // Cek duplikat nama di karyawan
-  if (DB.employees.find(function(e){ return e.email===email; })) {
+  if (DB.employees.find(function(e){ return (e.email||'').toLowerCase()===email; })) {
     showToast('Email "' + email + '" sudah terdaftar — gunakan nama lengkap agar berbeda','error');
     return;
   }
@@ -4572,12 +4602,19 @@ function importAkunCSV(input) {
   reader.readAsText(file, 'UTF-8');
 }
 
-// Auto-save draft to-do setiap 20 detik (untuk keamanan data pengguna aktif)
+// BUGFIX: Auto-save draft to-do setiap 5 detik (dipercepat dari 20s agar data tidak hilang)
 setInterval(function() {
   if (currentRole === 'kary' && currentPageId === 'todo') {
     autoSaveTodoDraft();
   }
-}, 20000);
+}, 5000);
+
+// BUGFIX: Simpan to-do saat user mau menutup tab/browser
+window.addEventListener('beforeunload', function() {
+  if (currentRole === 'kary' && currentUser) {
+    autoSaveTodoDraft();
+  }
+});
 
 // ==================== INIT ====================
 updateClock();
