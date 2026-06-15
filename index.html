@@ -484,16 +484,32 @@ rtdb.ref('.info/connected').on('value', function(snap) {
   if (lbl) lbl.textContent = fbOnline ? 'Online' : 'Offline';
 });
 
+// Bersihkan object dari nilai undefined sebelum kirim ke Firebase
+// (Firebase menolak undefined — hanya terima null, string, number, boolean, array, object)
+function cleanForFirebase(obj) {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(cleanForFirebase);
+  if (typeof obj === 'object') {
+    var out = {};
+    Object.keys(obj).forEach(function(k) {
+      var v = obj[k];
+      if (v !== undefined) out[k] = cleanForFirebase(v);
+    });
+    return out;
+  }
+  return obj;
+}
+
 // Simpan ke Firebase + localStorage
 function dbSave(data) {
   dbSaveLocal(data);
   if (bc) bc.postMessage({ type:'update', data });
-  fbRef('db').set(data).catch(function(e){ console.warn('Firebase save error:', e); });
+  fbRef('db').set(cleanForFirebase(data)).catch(function(e){ console.warn('Firebase save error:', e); });
 }
 
 // Simpan hanya satu sub-path ke Firebase (lebih efisien)
 function dbSavePath(path, value) {
-  try { fbRef('db/' + path).set(value).catch(function(e){ console.warn('Firebase path save error:', e); }); } catch(e) {}
+  try { fbRef('db/' + path).set(cleanForFirebase(value)).catch(function(e){ console.warn('Firebase path save error:', e); }); } catch(e) {}
 }
 
 // Inisialisasi DB — coba ambil dari Firebase, fallback ke localStorage
@@ -531,7 +547,7 @@ fbRef('db').on('value', function(snap) {
     if (currentUser) refreshCurrentPage();
   } else {
     // Belum ada data di Firebase → push data lokal
-    fbRef('db').set(DB).catch(function(){});
+    fbRef('db').set(cleanForFirebase(DB)).catch(function(){});
   }
 }, function(err) {
   console.warn('Firebase listener error (mode offline):', err);
@@ -563,7 +579,7 @@ function decodeEmailKey(key) {
 function usersToFirebase(usersObj) {
   var out = {};
   Object.keys(usersObj).forEach(function(email) {
-    out[encodeEmailKey(email)] = usersObj[email];
+    out[encodeEmailKey(email)] = cleanForFirebase(usersObj[email]);
   });
   return out;
 }
@@ -765,13 +781,13 @@ function tambahNotifikasiPerforma(emp, jenis, avgSkor, hariBerturut) {
 
   DB.notifikasiPerforma.unshift({
     id: Date.now(),
-    email: emp.email,
-    nama: emp.name,
-    koor: emp.koor,
-    jenis: jenis, // 'peringatan' | 'cabut'
+    email: emp.email || '',
+    nama: emp.name || '',
+    koor: emp.koor || '',
+    jenis: jenis,
     pesan: pesan,
-    avgSkor: avgSkor,
-    hariBerturut: hariBerturut,
+    avgSkor: avgSkor || 0,
+    hariBerturut: hariBerturut || 0,
     tanggal: todayKey(),
     dibaca: false
   });
@@ -786,9 +802,9 @@ function tambahNotifikasiPerforma(emp, jenis, avgSkor, hariBerturut) {
       id: Date.now()+1,
       date: new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}),
       from: 'Sistem (Otomatis)',
-      to: emp.name,
+      to: emp.name || '',
       jenis: 'Pencabutan Hak WFA',
-      alasan: pesan
+      alasan: pesan || ''
     });
   }
 }
@@ -1308,10 +1324,47 @@ function refreshCurrentPage() {
   if (currentRole && currentPageId) {
     var pg = document.getElementById('pg-' + currentPageId);
     if (pg && pg.classList.contains('active')) {
+      // JANGAN refresh halaman todo karyawan jika sedang diisi
+      // (mencegah Firebase listener menghapus input yang belum disimpan)
+      if (currentRole === 'kary' && currentPageId === 'todo') {
+        // Hanya refresh bagian yang aman (banner status absen), bukan form to-do
+        refreshTodoBannerOnly();
+        return;
+      }
       pg.innerHTML = buildPage(currentRole, currentPageId);
       onPageShow(currentRole, currentPageId);
     }
   }
+}
+
+// Refresh hanya status absen di banner todo (tidak menyentuh form/input karyawan)
+function refreshTodoBannerOnly() {
+  var aKey = attendKey(currentUser.email);
+  var rec  = DB.attendance[aKey] || {};
+  var sudahSiangBaru = !!rec.siang;
+  // Deteksi fase sekarang berdasarkan DOM:
+  // fase pagi = ada 'td-list' (form input to-do)
+  // fase siang = ada 'skor-list' (form penilaian skor)
+  var sedangFaseSiang = !!document.getElementById('skor-list');
+  var sedangFasePagi  = !!document.getElementById('td-list');
+
+  if (sudahSiangBaru && !sedangFaseSiang) {
+    // Fase baru berubah ke siang → auto-save dulu baru re-render
+    autoSaveTodoDraft();
+    var pg = document.getElementById('pg-todo');
+    if (pg) { pg.innerHTML = buildPage('kary','todo'); onPageShow('kary','todo'); }
+  } else if (!sudahSiangBaru && sedangFaseSiang) {
+    // Kasus edge: absen siang di-reset (jarang terjadi) → re-render aman
+    var pg2 = document.getElementById('pg-todo');
+    if (pg2) { pg2.innerHTML = buildPage('kary','todo'); onPageShow('kary','todo'); }
+  }
+  // Fase tidak berubah → tidak re-render, biarkan user mengetik dengan aman
+}
+
+// Auto-save draft tanpa gangguan (silent, tidak ada toast)
+function autoSaveTodoDraft() {
+  var hasTasks = myTodos.some(function(t){ return t.task.trim(); });
+  if (hasTasks) saveMyTodos();
 }
 
 function onPageShow(role, id) {
@@ -3128,14 +3181,16 @@ function saveMyTodos() {
   var existing = DB.todos[aKey] || [];
   DB.todos[aKey] = myTodos.map(function(t,i) {
     var prev = existing[i] || {};
-    return {
-      task: t.task,
-      score: (t.score===undefined?null:t.score),
-      koreksi_skor: (prev.koreksi_skor!==undefined ? prev.koreksi_skor : null),
-      komentar_koor: prev.komentar_koor || '',
-      koor_edit_by: prev.koor_edit_by,
-      koor_edit_time: prev.koor_edit_time
+    var item = {
+      task:         t.task || '',
+      score:        (t.score !== null && t.score !== undefined) ? t.score : null,
+      koreksi_skor: (prev.koreksi_skor !== null && prev.koreksi_skor !== undefined) ? prev.koreksi_skor : null,
+      komentar_koor: prev.komentar_koor || ''
     };
+    // Hanya tambahkan field opsional jika ada nilainya (Firebase tolak undefined)
+    if (prev.koor_edit_by)   item.koor_edit_by   = prev.koor_edit_by;
+    if (prev.koor_edit_time) item.koor_edit_time = prev.koor_edit_time;
+    return item;
   });
   dbSave(DB);
 }
@@ -3267,7 +3322,7 @@ function renderTodoList() {
   c.innerHTML = myTodos.map(function(t,i) {
     return '<div class="todo-item">' +
       '<span style="font-size:12px;color:var(--gray-400);min-width:18px">' + (i+1) + '.</span>' +
-      '<input type="text" value="' + t.task.replace(/"/g,'&quot;') + '" placeholder="Tulis tugas yang akan dikerjakan..." oninput="myTodos[' + i + '].task=this.value"/>' +
+      '<input type="text" value="' + t.task.replace(/"/g,'&quot;') + '" placeholder="Tulis tugas yang akan dikerjakan..." oninput="myTodos[' + i + '].task=this.value;autoSaveTodoDraft()"/>' +
       '<button class="del" onclick="delTodo(' + i + ')"><i class="ti ti-trash" style="font-size:14px"></i></button>' +
       '</div>';
   }).join('');
@@ -4516,6 +4571,13 @@ function importAkunCSV(input) {
   };
   reader.readAsText(file, 'UTF-8');
 }
+
+// Auto-save draft to-do setiap 20 detik (untuk keamanan data pengguna aktif)
+setInterval(function() {
+  if (currentRole === 'kary' && currentPageId === 'todo') {
+    autoSaveTodoDraft();
+  }
+}, 20000);
 
 // ==================== INIT ====================
 updateClock();
