@@ -470,6 +470,27 @@ function dbSaveLocal(data) {
   try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch(e) {}
 }
 
+// ---- Sesi login (BUGFIX: agar refresh halaman TIDAK kembali ke layar login, ----
+// ---- tapi lanjut tepat di halaman/posisi terakhir yang dibuka user) ----
+const SESSION_KEY = 'wfa_session_v1_luzie';
+function saveSession() {
+  if (!currentUser) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      email: currentUser.email,
+      role: currentUser.role,
+      pageId: currentPageId
+    }));
+  } catch(e) {}
+}
+function loadSession() {
+  try { var r = localStorage.getItem(SESSION_KEY); if (r) return JSON.parse(r); } catch(e) {}
+  return null;
+}
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
+
 // ---- Firebase helpers ----
 function fbRef(path) { return rtdb.ref('luzie/' + path); }
 function emailToKey(email) { return (email||'').replace(/\./g,'_').replace(/#/g,'_').replace(/\$/g,'_').replace(/\[/g,'_').replace(/\]/g,'_'); }
@@ -508,8 +529,17 @@ function dbSave(data) {
 }
 
 // Simpan hanya satu sub-path ke Firebase (lebih efisien)
+// BUGFIX: sekarang mengembalikan Promise, agar pemanggil bisa kasih feedback jujur ke user
+// (sebelumnya gagal kirim hanya tercatat di console, user tidak pernah tahu datanya belum tersimpan)
 function dbSavePath(path, value) {
-  try { fbRef('db/' + path).set(cleanForFirebase(value)).catch(function(e){ console.warn('Firebase path save error:', e); }); } catch(e) {}
+  try {
+    var p = fbRef('db/' + path).set(cleanForFirebase(value));
+    p.catch(function(e){ console.warn('Firebase path save error:', e); });
+    return p;
+  } catch(e) {
+    console.warn('Firebase path save error:', e);
+    return Promise.reject(e);
+  }
 }
 
 // Inisialisasi DB — coba ambil dari Firebase, fallback ke localStorage
@@ -712,6 +742,18 @@ function hitungSkorHarian(email, aKey) {
   updateAvgSkorBulanan(email);
 }
 
+// BUGFIX: simpan HANYA bagian DB yang benar-benar disentuh oleh hitungSkorHarian
+// (attendance/employees/notifikasi/sanksi), bukan dbSave(DB) yang menimpa seluruh database
+// dan berisiko menghapus absen/to-do karyawan lain yang ditulis di waktu yang berdekatan.
+function persistSkorHarian(email, aKey) {
+  dbSaveLocal(DB);
+  dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
+  var idx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase() === (email||'').toLowerCase(); });
+  if (idx >= 0) dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx]));
+  dbSavePath('notifikasiPerforma', cleanForFirebase(DB.notifikasiPerforma));
+  dbSavePath('sanctions', cleanForFirebase(DB.sanctions));
+}
+
 // Hitung rata-rata skor bulan ini untuk seorang karyawan & simpan ke DB.employees
 function updateAvgSkorBulanan(email) {
   var emp = DB.employees.find(function(e){ return e.email === email; });
@@ -840,7 +882,24 @@ function sanitizeDB() {
     });
   }
 
-  if (changed) dbSave(DB);
+  if (changed) {
+    dbSaveLocal(DB);
+    // BUGFIX: sebelumnya dbSave(DB) di sini menimpa SELURUH database memakai salinan
+    // lokal client ini. Karena fungsi ini otomatis jalan di SEMUA browser karyawan setiap
+    // kali ada perubahan akun, ini sering menghapus absen/to-do yang baru ditulis client lain
+    // pada saat yang sama. Sekarang pakai transaction yang hanya menyentuh path 'employees'
+    // dan menghitung ulang dari data TERBARU di server, jadi tidak bisa menimpa data lain.
+    fbRef('db/employees').transaction(function(serverEmployees) {
+      var emps = serverEmployees || [];
+      emps = emps.filter(function(e){ return !koorOnlyEmails.includes(e.email); });
+      if (validKoors.length) {
+        emps.forEach(function(e) {
+          if (!validKoors.includes(e.koor)) e.koor = defaultKoor;
+        });
+      }
+      return cleanForFirebase(emps);
+    });
+  }
 }
 
 let currentUser = null;
@@ -872,6 +931,23 @@ function showToast(msg, type) {
   t.style.borderLeft = '4px solid ' + colors[type];
   clearTimeout(t._timer);
   t._timer = setTimeout(function(){ t.style.display='none'; }, 3500);
+}
+
+// BUGFIX: indikator status simpan yang jujur ke karyawan (jangan biarkan mereka mengira
+// data sudah tersimpan padahal koneksi gagal/putus — ini akar masalah "data hilang")
+function showSaveStatus(targetId, status) {
+  var el = document.getElementById(targetId);
+  if (!el) return;
+  if (status === 'saving') {
+    el.innerHTML = '<i class="ti ti-loader-2" style="font-size:12px"></i> Menyimpan...';
+    el.style.color = 'var(--gray-400)';
+  } else if (status === 'saved') {
+    el.innerHTML = '<i class="ti ti-circle-check" style="font-size:12px"></i> Tersimpan';
+    el.style.color = 'var(--green)';
+  } else if (status === 'error') {
+    el.innerHTML = '<i class="ti ti-alert-triangle" style="font-size:12px"></i> Gagal tersimpan — periksa koneksi internet';
+    el.style.color = 'var(--red)';
+  }
 }
 
 // ==================== LOGIN ====================
@@ -1182,9 +1258,8 @@ function simpanSetupProfile() {
       status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
     });
   }
-  dbSave(DB);
-
-  // Update currentUser & lanjut ke dashboard
+  dbSaveLocal(DB);
+  dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB, hanya path employees
   currentUser.name = nama; currentUser.initials = initials; currentUser.avBg = bg; currentUser.avColor = '#fff';
 
   var setupPage = document.getElementById('setup-page');
@@ -1206,6 +1281,7 @@ function simpanSetupProfile() {
 
 
 function doLogout() {
+  clearSession(); // BUGFIX: hapus sesi tersimpan agar refresh setelah logout tidak login otomatis lagi
   currentUser        = null;
   loginSelectedRole  = null;
   loginSelectedEmail = null;
@@ -1216,6 +1292,42 @@ function doLogout() {
   document.getElementById('login-page').style.display = 'flex';
   // Reset ke step 1
   loginBackToRole();
+}
+
+// BUGFIX: dipanggil sekali saat halaman pertama kali dimuat/di-refresh.
+// Kalau ada sesi tersimpan & masih valid, langsung lanjutkan ke halaman terakhir
+// yang dibuka user — TIDAK perlu login ulang dan TIDAK kembali ke halaman awal.
+function trySessionResume() {
+  var session = loadSession();
+  if (!session || !session.email || !session.role) return false;
+
+  var u = USERS[session.email];
+  if (!u) return false; // akun sudah tidak ada (mis. dihapus HRD) → tampilkan login seperti biasa
+
+  var hasRole = u.roles && u.roles.some(function(r){ return r.role === session.role; });
+  if (!hasRole) return false;
+
+  // Karyawan yang profilnya belum lengkap → arahkan ke layar setup, bukan langsung ke portal
+  if (session.role === 'kary' && u.setupDone === false) {
+    currentUser = { email:session.email, name:u.name, initials:u.initials, avBg:u.avBg, avColor:u.avColor, role:'kary' };
+    document.getElementById('login-page').style.display = 'none';
+    showSetupProfile();
+    return true;
+  }
+
+  currentUser = { email:session.email, name:u.name, initials:u.initials, avBg:u.avBg, avColor:u.avColor, role:session.role };
+  document.getElementById('login-page').style.display = 'none';
+  var ap = document.getElementById('app-page');
+  ap.style.display = 'flex';
+  ap.style.flexDirection = 'column';
+  var av = document.getElementById('top-av');
+  av.textContent = u.initials;
+  av.style.background = u.avBg;
+  av.style.color = u.avColor;
+  document.getElementById('top-uname').textContent = u.name;
+  document.getElementById('top-urole').textContent = ROLE_LABEL[session.role];
+  buildPortal(session.role, session.pageId);
+  return true;
 }
 
 // ==================== PORTAL BUILDER ====================
@@ -1257,7 +1369,7 @@ var MENUS = {
   ]
 };
 
-function buildPortal(role) {
+function buildPortal(role, initialPageId) {
   currentRole = role;
   var sidebar = document.getElementById('sidebar');
   var main = document.getElementById('main-content');
@@ -1300,8 +1412,12 @@ function buildPortal(role) {
     mobAv.textContent = u.initials || '';
   }
 
-  var firstId = menus.find(function(m){ return m.id; }).id;
-  showPage(role, firstId);
+  var menuIds = menus.filter(function(m){ return m.id; }).map(function(m){ return m.id; });
+  var firstId = menuIds[0];
+  // BUGFIX: kalau dipanggil saat resume sesi (refresh halaman), lanjutkan ke halaman
+  // terakhir yang dibuka user, bukan selalu balik ke halaman pertama menu
+  var targetId = (initialPageId && menuIds.indexOf(initialPageId) >= 0) ? initialPageId : firstId;
+  showPage(role, targetId);
 }
 
 function showPage(role, id) {
@@ -1321,6 +1437,7 @@ function showPage(role, id) {
   }
   if (si) si.classList.add('active');
   if (bn) bn.classList.add('active');
+  saveSession(); // BUGFIX: simpan posisi terakhir, agar refresh halaman tidak kembali ke login
 }
 
 function refreshCurrentPage() {
@@ -1364,10 +1481,20 @@ function refreshTodoBannerOnly() {
   // Fase tidak berubah → tidak re-render, biarkan user mengetik dengan aman
 }
 
-// Auto-save draft tanpa gangguan (silent, tidak ada toast)
+// Auto-save draft tanpa gangguan (silent, tidak ada toast) — dipanggil tiap 5 detik & saat tab ditutup
 function autoSaveTodoDraft() {
   var hasTasks = myTodos.some(function(t){ return t.task.trim(); });
   if (hasTasks) saveMyTodos();
+}
+
+// BUGFIX: sebelumnya tiap 1 huruf yang diketik langsung kirim ke Firebase (boros kuota,
+// dan di koneksi lambat bisa terasa macet/lag saat mengetik). Sekarang tunggu user
+// berhenti mengetik 0.8 detik dulu sebelum benar-benar kirim ke server.
+var _todoTypingDebounce = null;
+function autoSaveTodoDraftDebounced() {
+  showSaveStatus('todo-save-status', 'saving');
+  if (_todoTypingDebounce) clearTimeout(_todoTypingDebounce);
+  _todoTypingDebounce = setTimeout(function(){ autoSaveTodoDraft(); }, 800);
 }
 
 function onPageShow(role, id) {
@@ -2164,15 +2291,17 @@ function buildKOOR(id) {
 
   if (id === 'monitor') {
     // Pastikan skor harian terbaru sebelum ditampilkan (auto-sync jika ada data to-do/absen yang belum dihitung)
-    var skorBerubah = false;
+    var changedEmails = [];
     timku.forEach(function(e){
       var aKey = attendKey(e.email);
       var before = JSON.stringify((DB.attendance[aKey]||{}).skor);
       hitungSkorHarian(e.email, aKey);
       var after = JSON.stringify((DB.attendance[aKey]||{}).skor);
-      if (before !== after) skorBerubah = true;
+      if (before !== after) changedEmails.push(e.email);
     });
-    if (skorBerubah) dbSave(DB);
+    // BUGFIX: dulu dbSave(DB) menimpa SELURUH database hanya karena koordinator membuka halaman ini.
+    // Sekarang hanya simpan karyawan yang skornya benar-benar berubah.
+    changedEmails.forEach(function(email){ persistSkorHarian(email, attendKey(email)); });
 
     return (
     '<div class="page-header"><h1>Monitor To-Do List ' + rtBadge() + '</h1><p>Pantau & verifikasi tugas anggota tim Anda</p></div>' +
@@ -3002,8 +3131,10 @@ function hapusDataAbsensiFilter() {
     emp.skor   = null;
   });
 
-  dbSave(DB);
-  showToast(deleted + ' record absensi dihapus untuk ' + filtered.length + ' karyawan','warning');
+  dbSaveLocal(DB);
+  // BUGFIX: hanya simpan path attendance & employees yang benar-benar diubah
+  dbSavePath('attendance', cleanForFirebase(DB.attendance));
+  dbSavePath('employees', cleanForFirebase(DB.employees));
   showPage('hrd','rekap');
 }
 
@@ -3092,9 +3223,14 @@ function karyAbsenPagi() {
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
-  dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
+  var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
+  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
+  // BUGFIX: kasih tahu karyawan secara jujur kalau absennya GAGAL terkirim ke server,
+  // jangan biarkan mereka mengira sudah tercatat padahal koneksi gagal
+  Promise.all([p1, p2]).catch(function(){
+    showToast('⚠️ Absen pagi tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
+  });
 
   // Tampilkan modal sukses → arahkan ke to-do list
   showAbsenSuksesModal(ts, late, 'pagi');
@@ -3114,9 +3250,12 @@ function karyAbsenSiang() {
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
-  dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
+  var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
+  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
+  Promise.all([p1, p2]).catch(function(){
+    showToast('⚠️ Absen siang tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
+  });
 
   showAbsenSuksesModal(ts, false, 'siang');
 }
@@ -3221,7 +3360,12 @@ function saveMyTodos() {
   DB.todos[aKey] = newTodos;
   // BUGFIX: simpan hanya path todos/aKey ke Firebase (bukan seluruh DB) → cegah race condition
   dbSaveLocal(DB);
-  dbSavePath('todos/' + aKey, cleanForFirebase(newTodos));
+  showSaveStatus('todo-save-status', 'saving');
+  dbSavePath('todos/' + aKey, cleanForFirebase(newTodos)).then(function(){
+    showSaveStatus('todo-save-status', 'saved');
+  }).catch(function(){
+    showSaveStatus('todo-save-status', 'error');
+  });
   if (bc) bc.postMessage({ type:'update', data: DB });
 }
 
@@ -3257,7 +3401,8 @@ function renderTodoFull() {
       '<div class="info-bar info-blue" style="margin-bottom:12px"><i class="ti ti-info-circle"></i>Tulis rencana kerja sebelum jam ' + DB.settings.batasPagi + '. Koordinator dapat melihat tugas Anda.</div>' +
       '<div id="td-list"></div>' +
       '<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px;justify-content:center" onclick="addTodo()"><i class="ti ti-plus"></i>Tambah Tugas</button>' +
-      '<div style="display:flex;justify-content:flex-end;margin-top:12px;gap:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:flex-end;margin-top:12px;gap:8px">' +
+        '<span id="todo-save-status" style="font-size:11px;color:var(--gray-400);margin-right:auto;display:flex;align-items:center;gap:4px"></span>' +
         '<button class="btn btn-ghost" onclick="saveTodoDraft()"><i class="ti ti-device-floppy"></i>Simpan Draft</button>' +
         '<button class="btn btn-primary" onclick="submitTodo()"><i class="ti ti-send"></i>Kirim ke Koordinator</button>' +
       '</div></div>' +
@@ -3352,7 +3497,7 @@ function renderTodoList() {
   c.innerHTML = myTodos.map(function(t,i) {
     return '<div class="todo-item">' +
       '<span style="font-size:12px;color:var(--gray-400);min-width:18px">' + (i+1) + '.</span>' +
-      '<input type="text" value="' + t.task.replace(/"/g,'&quot;') + '" placeholder="Tulis tugas yang akan dikerjakan..." oninput="myTodos[' + i + '].task=this.value;autoSaveTodoDraft()"/>' +
+      '<input type="text" value="' + t.task.replace(/"/g,'&quot;') + '" placeholder="Tulis tugas yang akan dikerjakan..." oninput="myTodos[' + i + '].task=this.value;autoSaveTodoDraftDebounced()"/>' +
       '<button class="del" onclick="delTodo(' + i + ')"><i class="ti ti-trash" style="font-size:14px"></i></button>' +
       '</div>';
   }).join('');
@@ -3447,7 +3592,7 @@ function submitSkor() {
   if (!f.length) { showToast('Isi skor minimal satu tugas','error'); return; }
   saveMyTodos();
   hitungSkorHarian(currentUser.email, attendKey(currentUser.email));
-  dbSave(DB);
+  persistSkorHarian(currentUser.email, attendKey(currentUser.email)); // BUGFIX: jangan dbSave(DB) penuh
   showToast('Penilaian skor berhasil disimpan & dikirim ke koordinator','success');
 }
 
@@ -3474,7 +3619,11 @@ function simpanKomentarKoor(tkKey, idx) {
   var ownerEmail = emailFromAttendKey(tkKey);
   if (ownerEmail) hitungSkorHarian(ownerEmail, tkKey);
 
-  dbSave(DB);
+  // BUGFIX: dulu dbSave(DB) menimpa seluruh database. Sekarang hanya simpan
+  // path todos milik karyawan ini + skor harian yang terdampak.
+  dbSaveLocal(DB);
+  dbSavePath('todos/' + tkKey, cleanForFirebase(todos));
+  if (ownerEmail) persistSkorHarian(ownerEmail, tkKey);
   showToast('Komentar & koreksi tersimpan','success');
 
   // Refresh area tombol simpan → tampil "Tersimpan"
@@ -3508,7 +3657,7 @@ function simpanSkorKomunikasi(email, tkKey) {
   DB.attendance[tkKey].skorKomunikasi_time = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
 
   hitungSkorHarian(email, tkKey);
-  dbSave(DB);
+  persistSkorHarian(email, tkKey); // BUGFIX: jangan dbSave(DB) penuh
 
   showToast('Nilai komunikasi tersimpan','success');
   showPage('koor','monitor');
@@ -3675,7 +3824,8 @@ function addKaryawan() {
     div: div, koor: koor, email: email, bg: bg,
     status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
   });
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
 
   // 2. Buat akun login otomatis
   USERS[email] = {
@@ -3696,7 +3846,8 @@ function ubahStatusKaryawan(id) {
   var statuses = ['hadir','terlambat','belum','cabut'];
   var cur = statuses.indexOf(DB.employees[idx].status);
   DB.employees[idx].status = statuses[(cur+1)%statuses.length];
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx])); // BUGFIX: jangan timpa seluruh DB
   showToast('Status '+DB.employees[idx].name+' diubah ke: '+DB.employees[idx].status,'info');
   showPage('hrd','karyawan');
 }
@@ -3714,7 +3865,9 @@ function kirimSanksiHRD() {
     DB.employees[empIdx].pelanggaran = (DB.employees[empIdx].pelanggaran||0)+1;
     if (jenis==='cabut') DB.employees[empIdx].status='cabut';
   }
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('sanctions', cleanForFirebase(DB.sanctions)); // BUGFIX: jangan timpa seluruh DB
+  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
   showToast('Sanksi "'+jenisLabel+'" dikirim ke '+empNama, jenis==='cabut'?'error':'warning');
   document.getElementById('h-alasan').value='';
   showPage('hrd','sanksi');
@@ -3729,7 +3882,9 @@ function kirimSanksiKoor() {
   DB.sanctions.unshift({id:Date.now(), date:tgl, from:'Koordinator', to:emp, jenis:'Teguran Lisan', alasan:'['+pelang+'] '+alasan});
   var empIdx = DB.employees.findIndex(function(e){ return e.name===emp; });
   if (empIdx>=0) DB.employees[empIdx].pelanggaran=(DB.employees[empIdx].pelanggaran||0)+1;
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('sanctions', cleanForFirebase(DB.sanctions)); // BUGFIX: jangan timpa seluruh DB
+  if (empIdx>=0) dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx]));
   showToast('Teguran dikirim ke '+emp+' dan diteruskan ke HRD','warning');
   document.getElementById('k-alasan').value='';
   showPage('koor','teguran');
@@ -3739,7 +3894,8 @@ function simpanPengaturan() {
   DB.settings.batasPagi  = document.getElementById('cfg-batasPagi')?.value || DB.settings.batasPagi;
   DB.settings.mulaiSiang = document.getElementById('cfg-mulaiSiang')?.value || DB.settings.mulaiSiang;
   DB.settings.minSkorBonus= parseInt(document.getElementById('cfg-minSkor')?.value)||DB.settings.minSkorBonus;
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('settings', cleanForFirebase(DB.settings)); // BUGFIX: jangan timpa seluruh DB
   showToast('Pengaturan berhasil disimpan dan berlaku realtime','success');
 }
 
@@ -3765,7 +3921,15 @@ function simpanBobotPerforma() {
   // Hitung ulang seluruh skor harian bulan ini dengan bobot baru
   recalcSemuaSkor();
 
-  dbSave(DB);
+  // BUGFIX: scope hanya ke branch yang benar2 disentuh (settings, attendance, employees,
+  // notifikasi, sanksi) — bukan dbSave(DB) yang juga ikut menimpa todos/zoomMeetings yang
+  // tidak ada hubungannya dengan aksi ini.
+  dbSaveLocal(DB);
+  dbSavePath('settings', cleanForFirebase(DB.settings));
+  dbSavePath('attendance', cleanForFirebase(DB.attendance));
+  dbSavePath('employees', cleanForFirebase(DB.employees));
+  dbSavePath('notifikasiPerforma', cleanForFirebase(DB.notifikasiPerforma));
+  dbSavePath('sanctions', cleanForFirebase(DB.sanctions));
   showToast('✅ Bobot & ambang batas tersimpan. Skor seluruh karyawan dihitung ulang.', 'success');
   showPage('hrd','pengaturan');
 }
@@ -3791,7 +3955,8 @@ function tambahDivisi() {
 
   list.push(nama);
   DB.settings.divisiList = list;
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('settings', cleanForFirebase(DB.settings)); // BUGFIX: jangan timpa seluruh DB
 
   showToast('✅ Divisi "' + nama + '" berhasil ditambahkan', 'success');
   showPage('hrd','pengaturan');
@@ -3809,7 +3974,8 @@ function hapusDivisi(idx) {
 
   list.splice(idx, 1);
   DB.settings.divisiList = list;
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('settings', cleanForFirebase(DB.settings)); // BUGFIX: jangan timpa seluruh DB
 
   showToast('Divisi "' + nama + '" dihapus dari daftar pilihan', 'warning');
   showPage('hrd','pengaturan');
@@ -3853,7 +4019,8 @@ function buatZoomMeeting() {
   if (!link.startsWith('http')) { showToast('Link harus diawali https://','error'); return; }
   DB.zoomMeetings = DB.zoomMeetings || [];
   DB.zoomMeetings.unshift({ id:Date.now(), koor:currentUser.name, tanggal:tgl, jam:jam, judul:judul, link:link, catatan:catatan, penting:penting, status:'Aktif' });
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('zoomMeetings', cleanForFirebase(DB.zoomMeetings)); // BUGFIX: jangan timpa seluruh DB
   showToast('Meeting "' + judul + '" berhasil dibuat & disebarkan ke tim', 'success');
   showPage('koor','zoom');
 }
@@ -3869,7 +4036,8 @@ function hapusZoomMeeting(id) {
   if (!m) return;
   if (!confirm('Hapus meeting "' + m.judul + '"?')) return;
   DB.zoomMeetings = DB.zoomMeetings.filter(function(x){ return x.id!==id; });
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('zoomMeetings', cleanForFirebase(DB.zoomMeetings)); // BUGFIX: jangan timpa seluruh DB
   showToast('Meeting dihapus','warning');
   showPage('koor','zoom');
 }
@@ -4078,7 +4246,8 @@ function hapusKaryawan(id) {
   if (!confirm('Hapus karyawan "' + emp.name + '"?\nAkun login juga akan dihapus. Aksi ini tidak dapat dibatalkan.')) return;
   // Hapus dari daftar karyawan
   DB.employees = DB.employees.filter(function(e){ return e.id!==id; });
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
   // Hapus akun login jika ada
   if (emp.email && USERS[emp.email]) {
     delete USERS[emp.email];
@@ -4096,7 +4265,8 @@ function hapusTerpilih() {
   if (!confirm('Hapus ' + ids.length + ' karyawan:\n' + names.join(', ') + '\n\nAkun login mereka juga akan dihapus. Aksi ini tidak dapat dibatalkan.')) return;
   var emailsToDelete = ids.map(function(id){ var e=DB.employees.find(function(x){return x.id===id;}); return e?e.email:''; }).filter(Boolean);
   DB.employees = DB.employees.filter(function(e){ return !ids.includes(e.id); });
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
   emailsToDelete.forEach(function(em){ if(em&&USERS[em]) delete USERS[em]; });
   if(emailsToDelete.length) saveUsers(USERS);
   showToast(ids.length + ' karyawan beserta akun loginnya berhasil dihapus','warning');
@@ -4116,7 +4286,8 @@ function hapusSemuaKaryawan() {
 
   var emailsToDelete = DB.employees.map(function(e){ return e.email; }).filter(Boolean);
   DB.employees = [];
-  dbSave(DB);
+  dbSaveLocal(DB);
+  dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
   emailsToDelete.forEach(function(em){ if(em && USERS[em]) delete USERS[em]; });
   if (emailsToDelete.length) saveUsers(USERS);
 
@@ -4152,6 +4323,8 @@ function resetTotalSistem() {
   DB.zoomMeetings = [];
   DB.notifikasiPerforma = [];
   DB.settings     = { batasPagi:'08:30', mulaiSiang:'12:00', mulaiKerja:'08:00', selesaiKerja:'17:00', radiusGPS:50, minSkorBonus:75, divisiList: DEFAULT_DIVISI_LIST.slice(), bobotAbsen:34, bobotTodo:33, bobotKomunikasi:33, minSkorRataRata:70, hariEvaluasiCabut:5 };
+  // CATATAN: dbSave(DB) di sini SENGAJA menimpa seluruh database — ini memang tombol
+  // "reset total ke nol" yang sudah dikonfirmasi 2x oleh HRD, jadi overwrite penuh adalah perilaku yang benar.
   dbSave(DB);
 
   // Reset USERS — sisakan hanya akun HRD yang sedang login (atau admin default)
@@ -4374,7 +4547,8 @@ function importCSV(input) {
         }
       }
 
-      dbSave(DB);
+      dbSaveLocal(DB);
+      dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
       saveUsers(USERS);
 
       var parts = [];
@@ -4619,6 +4793,7 @@ window.addEventListener('beforeunload', function() {
 // ==================== INIT ====================
 updateClock();
 setInterval(updateClock,1000);
+trySessionResume(); // BUGFIX: lanjutkan ke halaman terakhir setelah refresh, bukan kembali ke login
 </script>
 </body>
 </html>
