@@ -1269,7 +1269,7 @@ function simpanSetupProfile() {
     DB.employees.push({
       id: Date.now(), name: nama, inits: initials,
       div: div, koor: koor, email: email, bg: bg,
-      status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+      status:'aktif', pelanggaran:0
     });
   }
   dbSaveLocal(DB);
@@ -1529,9 +1529,11 @@ function rtBadge() {
 }
 
 function statusBadge(s) {
-  var map  = {hadir:'badge-green',terlambat:'badge-amber',belum:'badge-gray',cabut:'badge-red'};
-  var lbl  = {hadir:'Tepat waktu',terlambat:'Terlambat',belum:'Belum absen',cabut:'Hak dicabut'};
-  var ic   = {hadir:'ti-check',terlambat:'ti-clock',belum:'ti-minus',cabut:'ti-ban'};
+  // hadir/terlambat/belum = status absensi harian (dari DB.attendance)
+  // aktif/cabut = status permanen akun karyawan (dari DB.employees)
+  var map  = {hadir:'badge-green',terlambat:'badge-amber',belum:'badge-gray',cabut:'badge-red',aktif:'badge-green'};
+  var lbl  = {hadir:'Tepat waktu',terlambat:'Terlambat',belum:'Belum absen',cabut:'Hak dicabut',aktif:'Aktif'};
+  var ic   = {hadir:'ti-check',terlambat:'ti-clock',belum:'ti-minus',cabut:'ti-ban',aktif:'ti-check'};
   return '<span class="badge ' + (map[s]||'badge-gray') + '"><i class="ti ' + (ic[s]||'ti-minus') + '"></i>' + (lbl[s]||s) + '</span>';
 }
 
@@ -1648,10 +1650,19 @@ function buildSkorTrendChart(emails, numDays, threshold) {
 // ---- HRD ----
 function buildHRD(id) {
   var emps = DB.employees;
-  var hadir    = emps.filter(function(e){ return e.status==='hadir'; }).length;
-  var terlambat= emps.filter(function(e){ return e.status==='terlambat'; }).length;
-  var belum    = emps.filter(function(e){ return e.status==='belum'; }).length;
-  var cabut    = emps.filter(function(e){ return e.status==='cabut'; }).length;
+  var today = todayKey();
+
+  // BUGFIX: hadir/terlambat/belum harus dibaca dari DB.attendance[hari ini],
+  // bukan dari DB.employees.status yang merupakan status permanen dan TIDAK
+  // direset tiap hari — itulah kenapa dashboard selalu menampilkan data kemarin.
+  var hadir = 0, terlambat = 0, belum = 0, cabut = 0;
+  emps.forEach(function(e) {
+    if (e.status === 'cabut') { cabut++; return; }
+    var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+    if (rec.status === 'hadir')        hadir++;
+    else if (rec.status === 'terlambat') terlambat++;
+    else                                 belum++;
+  });
 
   if (id === 'dashboard') return (
     '<div class="page-header"><h1>Dashboard HRD ' + rtBadge() + '</h1><p>Ringkasan kondisi WFA hari ini — ' + new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) + '</p></div>' +
@@ -1663,14 +1674,19 @@ function buildHRD(id) {
     '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-users"></i><h2>Status Absensi Karyawan</h2></div>' +
     emps.map(function(e) {
+      // BUGFIX: ambil jam pagi, siang, dan status dari attendance HARI INI
+      // bukan dari DB.employees yang menyimpan status permanen & tidak direset harian
+      var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+      var absenStatus = e.status === 'cabut' ? 'cabut'
+                      : (rec.status || 'belum');
       return '<div class="trow">' +
         '<div class="av" style="background:' + e.bg + ';color:#fff">' + e.inits + '</div>' +
         '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--gray-800)">' + e.name + '</div>' +
         '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Koor: ' + e.koor + '</div></div>' +
         '<div style="text-align:right;margin-right:12px">' +
-          '<div style="font-size:12px;font-weight:600;color:var(--gray-600)">Pagi: ' + e.pagi + ' | Siang: ' + e.siang + '</div>' +
+          '<div style="font-size:12px;font-weight:600;color:var(--gray-600)">Pagi: ' + (rec.pagi||'--') + ' | Siang: ' + (rec.siang||'--') + '</div>' +
           '<div style="font-size:11px;color:var(--gray-400)">Hubstaff: ' + (e.status==='cabut'?'<span style="color:var(--red)">Non-aktif</span>':'<span style="color:var(--green)">Aktif</span>') + '</div>' +
-        '</div>' + statusBadge(e.status) + '</div>';
+        '</div>' + statusBadge(absenStatus) + '</div>';
     }).join('') + '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-alert-circle" style="color:var(--red)"></i><h2>Pelanggaran Terbaru</h2></div>' +
     DB.sanctions.slice(0,3).map(function(s) {
@@ -2078,9 +2094,15 @@ function buildHRD(id) {
 
     // Summary total
     var totalKary   = targetEmps.length;
-    var hadirHariIni= targetEmps.filter(function(e){ return e.status==='hadir'||e.status==='terlambat'; }).length;
-    var blmAbsen    = targetEmps.filter(function(e){ return e.status==='belum'; }).length;
-    var cabut       = targetEmps.filter(function(e){ return e.status==='cabut'; }).length;
+    // BUGFIX: sama seperti dashboard — baca status absen hari ini dari DB.attendance
+    var todayL = todayKey();
+    var hadirHariIni = 0, blmAbsen = 0, cabut = 0;
+    targetEmps.forEach(function(e) {
+      if (e.status === 'cabut') { cabut++; return; }
+      var r = DB.attendance[attendKeyFor(e.email, todayL)] || {};
+      if (r.status === 'hadir' || r.status === 'terlambat') hadirHariIni++;
+      else blmAbsen++;
+    });
 
     return (
       '<div class="page-header"><h1>Laporan ' + (isKoor?'Tim':'Kehadiran') + '</h1><p>' + bulanLabel + (isKoor?' · Tim '+currentUser.name:'') + '</p></div>' +
@@ -2230,9 +2252,18 @@ function buildHRD(id) {
 // ---- KOORDINATOR ----
 function buildKOOR(id) {
   var timku = DB.employees.filter(function(e){ return e.koor===currentUser.name; });
-  var hadir    = timku.filter(function(e){ return e.status==='hadir'; }).length;
-  var terlambat= timku.filter(function(e){ return e.status==='terlambat'; }).length;
-  var belum    = timku.filter(function(e){ return e.status==='belum'||e.status==='cabut'; }).length;
+  var today = todayKey();
+
+  // BUGFIX: sama seperti HRD dashboard — status hadir/terlambat/belum harus dibaca
+  // dari DB.attendance[hari ini], bukan DB.employees.status yang tidak direset harian
+  var hadir = 0, terlambat = 0, belum = 0;
+  timku.forEach(function(e) {
+    if (e.status === 'cabut') { belum++; return; }
+    var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+    if (rec.status === 'hadir')          hadir++;
+    else if (rec.status === 'terlambat') terlambat++;
+    else                                 belum++;
+});
 
   if (id === 'dashboard') {
     if (!timku.length) {
@@ -2255,16 +2286,20 @@ function buildKOOR(id) {
     '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-clipboard-check"></i><h2>Status Tim Hari Ini</h2></div>' +
     timku.map(function(e) {
-      var ring = e.skor ? '<div class="score-ring ' + (e.skor>=80?'good':'warn') + '" style="margin-right:10px">' + e.skor + '</div>' : '<div class="score-ring" style="margin-right:10px;border-color:var(--gray-200);color:var(--gray-400)">—</div>';
+      // BUGFIX: baca jam pagi/siang/status dari attendance hari ini, bukan dari employees
+      var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+      var absenStatus = e.status === 'cabut' ? 'cabut' : (rec.status || 'belum');
+      var todaySkor = rec.skor;
+      var ring = todaySkor != null ? '<div class="score-ring ' + (todaySkor>=80?'good':'warn') + '" style="margin-right:10px">' + todaySkor + '</div>' : '<div class="score-ring" style="margin-right:10px;border-color:var(--gray-200);color:var(--gray-400)">—</div>';
       return '<div class="trow">' +
         '<div class="av" style="background:' + e.bg + ';color:#fff">' + e.inits + '</div>' +
         '<div style="flex:1"><div style="font-size:13px;font-weight:600">' + e.name + '</div>' +
-        '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Pagi: ' + e.pagi + ' | Siang: ' + e.siang + '</div></div>' +
-        ring + statusBadge(e.status) + '</div>';
+        '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Pagi: ' + (rec.pagi||'--') + ' | Siang: ' + (rec.siang||'--') + '</div></div>' +
+        ring + statusBadge(absenStatus) + '</div>';
     }).join('') + '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-device-laptop" style="color:var(--green)"></i><h2>Status Hubstaff Tim</h2></div>' +
     timku.map(function(e) {
-      var on = e.status!=='cabut'&&e.status!=='belum';
+      var on = e.status !== 'cabut'; // Hubstaff aktif = akun tidak dicabut (status permanen)
       return '<div class="hubs-bar">' +
         '<div class="hubs-dot ' + (on?'hubs-active':'hubs-off') + '"></div>' +
         '<div style="flex:1;font-size:13px;font-weight:500">' + e.name + '</div>' +
@@ -3164,11 +3199,9 @@ function hapusDataAbsensiFilter() {
         deleted++;
       }
     });
-    // Reset status karyawan
-    emp.status = 'belum';
-    emp.pagi   = '--';
-    emp.siang  = '--';
-    emp.skor   = null;
+    // Reset status permanen karyawan ke 'aktif' (bukan 'belum' — 
+    // status absensi harian sekarang dibaca dari DB.attendance, bukan DB.employees)
+    emp.status = 'aktif';
   });
 
   dbSaveLocal(DB);
@@ -3258,17 +3291,16 @@ function karyAbsenPagi() {
   DB.attendance[aKey].status = late?'terlambat':'hadir';
   DB.attendance[aKey].gps    = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
   var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
-  if (empIdx>=0) { DB.employees[empIdx].status=late?'terlambat':'hadir'; DB.employees[empIdx].pagi=ts; }
+  // CATATAN: tidak perlu lagi tulis status/pagi ke DB.employees — dashboard
+  // sekarang membaca langsung dari DB.attendance[hari ini], lebih akurat
   hitungSkorHarian(currentUser.email, aKey);
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
   var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
-  // BUGFIX: kasih tahu karyawan secara jujur kalau absennya GAGAL terkirim ke server,
-  // jangan biarkan mereka mengira sudah tercatat padahal koneksi gagal
-  Promise.all([p1, p2]).catch(function(){
+  // BUGFIX: kasih tahu karyawan secara jujur kalau absennya GAGAL terkirim ke server
+  p1.catch(function(){
     showToast('⚠️ Absen pagi tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
   });
 
@@ -3286,14 +3318,13 @@ function karyAbsenSiang() {
   DB.attendance[aKey].siang = ts;
   DB.attendance[aKey].gps_siang = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
   var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
-  if (empIdx>=0) DB.employees[empIdx].siang = ts;
+  // CATATAN: tidak perlu lagi tulis siang ke DB.employees — dashboard membaca dari DB.attendance
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
   var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
-  Promise.all([p1, p2]).catch(function(){
+  p1.catch(function(){
     showToast('⚠️ Absen siang tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
   });
 
@@ -3862,7 +3893,7 @@ function addKaryawan() {
     id: Date.now(), name: nama,
     inits: nama.split(' ').map(function(x){ return x[0]||''; }).join('').slice(0,2).toUpperCase(),
     div: div, koor: koor, email: email, bg: bg,
-    status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+    status:'aktif', pelanggaran:0
   });
   dbSaveLocal(DB);
   dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
@@ -3883,12 +3914,16 @@ function addKaryawan() {
 function ubahStatusKaryawan(id) {
   var idx = DB.employees.findIndex(function(e){ return e.id===id; });
   if (idx<0) return;
-  var statuses = ['hadir','terlambat','belum','cabut'];
-  var cur = statuses.indexOf(DB.employees[idx].status);
-  DB.employees[idx].status = statuses[(cur+1)%statuses.length];
+  // BUGFIX: status di DB.employees adalah status PERMANEN akun (aktif/cabut).
+  // Status hadir/terlambat/belum hanya boleh datang dari absensi nyata di DB.attendance,
+  // bukan diubah manual dari sini — jadi siklus hanya antara 'aktif' dan 'cabut'.
+  // (Sebelumnya siklus mencakup 'hadir','terlambat','belum','cabut' yang menyebabkan
+  // dashboard menampilkan status palsu dari DB.employees, bukan dari attendance hari ini.)
+  var cur = DB.employees[idx].status;
+  DB.employees[idx].status = (cur === 'cabut') ? 'aktif' : 'cabut';
   dbSaveLocal(DB);
-  dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx])); // BUGFIX: jangan timpa seluruh DB
-  showToast('Status '+DB.employees[idx].name+' diubah ke: '+DB.employees[idx].status,'info');
+  dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx]));
+  showToast('Status ' + DB.employees[idx].name + ' diubah ke: ' + DB.employees[idx].status, 'info');
   showPage('hrd','karyawan');
 }
 
@@ -4690,7 +4725,7 @@ function importCSV(input) {
           DB.employees.push({
             id: Date.now()+i, name:nama, inits:inits,
             div:divVal, koor:koorVal, email:email, bg:bg,
-            status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+            status:'aktif', pelanggaran:0
           });
           USERS[email] = { name:nama, initials:inits, avBg:bg, avColor:'#fff', roles:[{pass:finalPass, role:'kary'}], setupDone:true };
           added++;
