@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>WFA System — Numeta by Luzie Group</title>
+<title>WFA System — Luzie Group</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css"/>
 
@@ -12,14 +12,14 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
   const firebaseConfig = {
-    apiKey: "AIzaSyAxPObCVrd2adpivs2iNGluozqtY1seoqA",
-    authDomain: "wfa-system-v3.firebaseapp.com",
-    databaseURL: "https://wfa-system-v3-default-rtdb.asia-southeast1.firebasedatabase.app",
-    projectId: "wfa-system-v3",
-    storageBucket: "wfa-system-v3.firebasestorage.app",
-    messagingSenderId: "315254355578",
-    appId: "1:315254355578:web:9a4b4a01055ecd0ddd2dc3",
-    measurementId: "G-C91EG4ES7D"
+    apiKey: "AIzaSyAm6jHM04W2vdopnMeYOseGm4F2d9OvoSY",
+    authDomain: "wfa-system-v2.firebaseapp.com",
+    databaseURL: "https://wfa-system-v2-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "wfa-system-v2",
+    storageBucket: "wfa-system-v2.firebasestorage.app",
+    messagingSenderId: "97930001376",
+    appId: "1:97930001376:web:1b04e66f5ea063346fc985",
+    measurementId: "G-XM7NQRDQPV"
   };
   firebase.initializeApp(firebaseConfig);
   const rtdb = firebase.database();
@@ -337,7 +337,7 @@ table.data-table tr:hover td{background:var(--blue-50)}
 <div id="login-page">
   <div class="login-top">
     <div class="login-logo"><i class="ti ti-home-check" style="font-size:20px;color:var(--blue-700)"></i></div>
-    <div class="login-brand">WFA System <span>Numeta by Luzie Group</span></div>
+    <div class="login-brand">WFA System <span>Luzie Group</span></div>
   </div>
   <div class="login-hero">
     <div class="login-box">
@@ -409,7 +409,7 @@ table.data-table tr:hover td{background:var(--blue-50)}
   <nav class="topnav">
     <div class="topnav-brand">
       <div class="topnav-logo"><i class="ti ti-home-check"></i></div>
-      <div><div class="topnav-name">WFA System</div><div class="topnav-sub">Numeta by Luzie Group</div></div>
+      <div><div class="topnav-name">WFA System</div><div class="topnav-sub">Luzie Group</div></div>
     </div>
     <div class="topnav-clock" id="topnav-clock">--:--:--</div>
     <div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,.1);border-radius:99px;padding:4px 10px;margin-left:10px">
@@ -538,6 +538,20 @@ function dbSavePath(path, value) {
     return p;
   } catch(e) {
     console.warn('Firebase path save error:', e);
+    return Promise.reject(e);
+  }
+}
+
+// Multi-path update relatif terhadap satu basePath — dipakai fitur arsip untuk
+// menghapus banyak key sekaligus (key:null) dalam SATU panggilan jaringan,
+// bukan timpa seluruh DB.
+function dbUpdatePaths(basePath, updatesObj) {
+  try {
+    var p = fbRef('db/' + basePath).update(updatesObj);
+    p.catch(function(e){ console.warn('Firebase update error:', e); });
+    return p;
+  } catch(e) {
+    console.warn('Firebase update error:', e);
     return Promise.reject(e);
   }
 }
@@ -1180,7 +1194,7 @@ function showSetupProfile() {
     '<div style="display:flex;flex-direction:column;min-height:100vh;background:var(--blue-900)">' +
       '<div class="login-top">' +
         '<div class="login-logo"><i class="ti ti-home-check" style="font-size:20px;color:var(--blue-700)"></i></div>' +
-        '<div class="login-brand">WFA System <span>Numeta by Luzie Group</span></div>' +
+        '<div class="login-brand">WFA System <span>Luzie Group</span></div>' +
       '</div>' +
       '<div class="login-hero">' +
         '<div class="login-box">' +
@@ -1255,7 +1269,7 @@ function simpanSetupProfile() {
     DB.employees.push({
       id: Date.now(), name: nama, inits: initials,
       div: div, koor: koor, email: email, bg: bg,
-      status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+      status:'aktif', pelanggaran:0
     });
   }
   dbSaveLocal(DB);
@@ -1515,9 +1529,11 @@ function rtBadge() {
 }
 
 function statusBadge(s) {
-  var map  = {hadir:'badge-green',terlambat:'badge-amber',belum:'badge-gray',cabut:'badge-red'};
-  var lbl  = {hadir:'Tepat waktu',terlambat:'Terlambat',belum:'Belum absen',cabut:'Hak dicabut'};
-  var ic   = {hadir:'ti-check',terlambat:'ti-clock',belum:'ti-minus',cabut:'ti-ban'};
+  // hadir/terlambat/belum = status absensi harian (dari DB.attendance)
+  // aktif/cabut = status permanen akun karyawan (dari DB.employees)
+  var map  = {hadir:'badge-green',terlambat:'badge-amber',belum:'badge-gray',cabut:'badge-red',aktif:'badge-green'};
+  var lbl  = {hadir:'Tepat waktu',terlambat:'Terlambat',belum:'Belum absen',cabut:'Hak dicabut',aktif:'Aktif'};
+  var ic   = {hadir:'ti-check',terlambat:'ti-clock',belum:'ti-minus',cabut:'ti-ban',aktif:'ti-check'};
   return '<span class="badge ' + (map[s]||'badge-gray') + '"><i class="ti ' + (ic[s]||'ti-minus') + '"></i>' + (lbl[s]||s) + '</span>';
 }
 
@@ -1634,10 +1650,19 @@ function buildSkorTrendChart(emails, numDays, threshold) {
 // ---- HRD ----
 function buildHRD(id) {
   var emps = DB.employees;
-  var hadir    = emps.filter(function(e){ return e.status==='hadir'; }).length;
-  var terlambat= emps.filter(function(e){ return e.status==='terlambat'; }).length;
-  var belum    = emps.filter(function(e){ return e.status==='belum'; }).length;
-  var cabut    = emps.filter(function(e){ return e.status==='cabut'; }).length;
+  var today = todayKey();
+
+  // BUGFIX: hadir/terlambat/belum harus dibaca dari DB.attendance[hari ini],
+  // bukan dari DB.employees.status yang merupakan status permanen dan TIDAK
+  // direset tiap hari — itulah kenapa dashboard selalu menampilkan data kemarin.
+  var hadir = 0, terlambat = 0, belum = 0, cabut = 0;
+  emps.forEach(function(e) {
+    if (e.status === 'cabut') { cabut++; return; }
+    var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+    if (rec.status === 'hadir')        hadir++;
+    else if (rec.status === 'terlambat') terlambat++;
+    else                                 belum++;
+  });
 
   if (id === 'dashboard') return (
     '<div class="page-header"><h1>Dashboard HRD ' + rtBadge() + '</h1><p>Ringkasan kondisi WFA hari ini — ' + new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) + '</p></div>' +
@@ -1649,14 +1674,19 @@ function buildHRD(id) {
     '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-users"></i><h2>Status Absensi Karyawan</h2></div>' +
     emps.map(function(e) {
+      // BUGFIX: ambil jam pagi, siang, dan status dari attendance HARI INI
+      // bukan dari DB.employees yang menyimpan status permanen & tidak direset harian
+      var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+      var absenStatus = e.status === 'cabut' ? 'cabut'
+                      : (rec.status || 'belum');
       return '<div class="trow">' +
         '<div class="av" style="background:' + e.bg + ';color:#fff">' + e.inits + '</div>' +
         '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--gray-800)">' + e.name + '</div>' +
         '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Koor: ' + e.koor + '</div></div>' +
         '<div style="text-align:right;margin-right:12px">' +
-          '<div style="font-size:12px;font-weight:600;color:var(--gray-600)">Pagi: ' + e.pagi + ' | Siang: ' + e.siang + '</div>' +
+          '<div style="font-size:12px;font-weight:600;color:var(--gray-600)">Pagi: ' + (rec.pagi||'--') + ' | Siang: ' + (rec.siang||'--') + '</div>' +
           '<div style="font-size:11px;color:var(--gray-400)">Hubstaff: ' + (e.status==='cabut'?'<span style="color:var(--red)">Non-aktif</span>':'<span style="color:var(--green)">Aktif</span>') + '</div>' +
-        '</div>' + statusBadge(e.status) + '</div>';
+        '</div>' + statusBadge(absenStatus) + '</div>';
     }).join('') + '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-alert-circle" style="color:var(--red)"></i><h2>Pelanggaran Terbaru</h2></div>' +
     DB.sanctions.slice(0,3).map(function(s) {
@@ -2064,9 +2094,15 @@ function buildHRD(id) {
 
     // Summary total
     var totalKary   = targetEmps.length;
-    var hadirHariIni= targetEmps.filter(function(e){ return e.status==='hadir'||e.status==='terlambat'; }).length;
-    var blmAbsen    = targetEmps.filter(function(e){ return e.status==='belum'; }).length;
-    var cabut       = targetEmps.filter(function(e){ return e.status==='cabut'; }).length;
+    // BUGFIX: sama seperti dashboard — baca status absen hari ini dari DB.attendance
+    var todayL = todayKey();
+    var hadirHariIni = 0, blmAbsen = 0, cabut = 0;
+    targetEmps.forEach(function(e) {
+      if (e.status === 'cabut') { cabut++; return; }
+      var r = DB.attendance[attendKeyFor(e.email, todayL)] || {};
+      if (r.status === 'hadir' || r.status === 'terlambat') hadirHariIni++;
+      else blmAbsen++;
+    });
 
     return (
       '<div class="page-header"><h1>Laporan ' + (isKoor?'Tim':'Kehadiran') + '</h1><p>' + bulanLabel + (isKoor?' · Tim '+currentUser.name:'') + '</p></div>' +
@@ -2084,7 +2120,7 @@ function buildHRD(id) {
         '<button class="btn btn-ghost btn-sm card-action" onclick="exportLaporan()"><i class="ti ti-download"></i>Export CSV</button>' +
       '</div>' +
       '<div style="overflow-x:auto"><table class="data-table" style="min-width:600px"><thead><tr>' +
-        '<th>Nama</th><th>' + (isHRD?'Divisi':'Koordinator') + '</th><th>Hadir</th><th>Terlambat</th><th>Tdk Lengkap</th><th>Avg Skor</th><th>Status</th>' +
+        '<th>Nama</th><th>' + (isHRD?'Divisi':'Nama') + '</th><th>Hadir</th><th>Terlambat</th><th>Tdk Lengkap</th><th>Avg Skor</th><th>Status</th>' +
       '</tr></thead><tbody>' +
       empStats.map(function(s) {
         var e = s.emp;
@@ -2122,7 +2158,16 @@ function buildHRD(id) {
           '<div style="font-size:10px;color:var(--gray-400);margin-top:3px">' + pct + '%</div>' +
         '</div>';
       }).join('') +
-      '</div></div>'
+      '</div></div>' +
+
+      (DB.settings.archiveSheetUrl ?
+        '<div class="card" style="background:var(--blue-50);border:1px solid var(--blue-200)">' +
+          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+            '<i class="ti ti-archive" style="font-size:20px;color:var(--blue-600)"></i>' +
+            '<div style="flex:1;min-width:200px"><div style="font-weight:700;font-size:13px">Arsip Data Lama</div><div style="font-size:12px;color:var(--gray-500)">Riwayat absen & to-do bulan-bulan sebelumnya yang sudah dipindahkan dari Firebase</div></div>' +
+            '<a href="' + DB.settings.archiveSheetUrl + '" target="_blank" class="btn btn-ghost btn-sm"><i class="ti ti-external-link"></i>Buka di Google Sheets</a>' +
+          '</div></div>'
+      : '')
     );
   }
 
@@ -2172,6 +2217,23 @@ function buildHRD(id) {
       '<button class="btn btn-primary" onclick="tambahDivisi()"><i class="ti ti-plus"></i>Tambah Divisi</button>' +
     '</div></div>' +
 
+    /* ---- ARSIP DATA LAMA KE GOOGLE SHEETS ---- */
+    '<div class="card"><div class="card-head"><i class="ti ti-archive" style="color:var(--blue-600)"></i><h2>Arsip Data Lama ke Google Sheets</h2></div>' +
+    '<div class="info-bar info-blue" style="margin-bottom:12px"><i class="ti ti-info-circle"></i>Memindahkan riwayat absen & to-do yang sudah lama keluar dari Firebase membuat kuota gratis Firebase tidak cepat habis. Data yang sudah diarsipkan TIDAK hilang — tetap bisa dibuka kapan saja lewat link Google Sheets di bawah.</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" class="pengaturan-grid">' +
+      '<div class="field" style="margin:0"><label>URL Web App Apps Script</label><input type="text" id="cfg-arsipUrl" placeholder="https://script.google.com/macros/s/.../exec" value="' + (DB.settings.archiveWebAppUrl||'').replace(/"/g,'&quot;') + '"/></div>' +
+      '<div class="field" style="margin:0"><label>Secret Key</label><input type="text" id="cfg-arsipSecret" placeholder="samakan dengan SECRET di Apps Script" value="' + (DB.settings.archiveSecret||'').replace(/"/g,'&quot;') + '"/></div>' +
+    '</div>' +
+    '<div class="field"><label>Link Google Sheets (untuk dibuka & dilihat)</label><input type="text" id="cfg-arsipSheetLink" placeholder="https://docs.google.com/spreadsheets/d/..." value="' + (DB.settings.archiveSheetUrl||'').replace(/"/g,'&quot;') + '"/></div>' +
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><button class="btn btn-ghost" onclick="simpanKonfigArsip()"><i class="ti ti-device-floppy"></i>Simpan Konfigurasi</button></div>' +
+    '<div class="divider"></div>' +
+    '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end" class="pengaturan-grid">' +
+      '<div class="field" style="margin:0"><label>Arsipkan semua data SEBELUM bulan</label><input type="month" id="arsip-cutoff" value="' + defaultCutoffMonth() + '"/></div>' +
+      '<button class="btn btn-primary" id="btn-arsipkan" onclick="arsipkanDataLama()" style="height:42px"><i class="ti ti-archive"></i>Arsipkan & Bersihkan</button>' +
+    '</div>' +
+    (DB.settings.archiveSheetUrl ? '<div style="margin-top:12px"><a href="' + DB.settings.archiveSheetUrl + '" target="_blank" style="font-size:13px;color:var(--blue-600);display:inline-flex;align-items:center;gap:5px"><i class="ti ti-external-link"></i>Buka Arsip di Google Sheets</a></div>' : '') +
+    '</div>' +
+
     '<div class="card" style="border:1px solid #fca5a5">' +
       '<div class="card-head"><i class="ti ti-alert-octagon" style="color:var(--red)"></i><h2 style="color:var(--red)">Zona Bahaya</h2></div>' +
       '<div class="info-bar" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">' +
@@ -2190,9 +2252,18 @@ function buildHRD(id) {
 // ---- KOORDINATOR ----
 function buildKOOR(id) {
   var timku = DB.employees.filter(function(e){ return e.koor===currentUser.name; });
-  var hadir    = timku.filter(function(e){ return e.status==='hadir'; }).length;
-  var terlambat= timku.filter(function(e){ return e.status==='terlambat'; }).length;
-  var belum    = timku.filter(function(e){ return e.status==='belum'||e.status==='cabut'; }).length;
+  var today = todayKey();
+
+  // BUGFIX: sama seperti HRD dashboard — status hadir/terlambat/belum harus dibaca
+  // dari DB.attendance[hari ini], bukan DB.employees.status yang tidak direset harian
+  var hadir = 0, terlambat = 0, belum = 0;
+  timku.forEach(function(e) {
+    if (e.status === 'cabut') { belum++; return; }
+    var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+    if (rec.status === 'hadir')          hadir++;
+    else if (rec.status === 'terlambat') terlambat++;
+    else                                 belum++;
+});
 
   if (id === 'dashboard') {
     if (!timku.length) {
@@ -2215,16 +2286,20 @@ function buildKOOR(id) {
     '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-clipboard-check"></i><h2>Status Tim Hari Ini</h2></div>' +
     timku.map(function(e) {
-      var ring = e.skor ? '<div class="score-ring ' + (e.skor>=80?'good':'warn') + '" style="margin-right:10px">' + e.skor + '</div>' : '<div class="score-ring" style="margin-right:10px;border-color:var(--gray-200);color:var(--gray-400)">—</div>';
+      // BUGFIX: baca jam pagi/siang/status dari attendance hari ini, bukan dari employees
+      var rec = DB.attendance[attendKeyFor(e.email, today)] || {};
+      var absenStatus = e.status === 'cabut' ? 'cabut' : (rec.status || 'belum');
+      var todaySkor = rec.skor;
+      var ring = todaySkor != null ? '<div class="score-ring ' + (todaySkor>=80?'good':'warn') + '" style="margin-right:10px">' + todaySkor + '</div>' : '<div class="score-ring" style="margin-right:10px;border-color:var(--gray-200);color:var(--gray-400)">—</div>';
       return '<div class="trow">' +
         '<div class="av" style="background:' + e.bg + ';color:#fff">' + e.inits + '</div>' +
         '<div style="flex:1"><div style="font-size:13px;font-weight:600">' + e.name + '</div>' +
-        '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Pagi: ' + e.pagi + ' | Siang: ' + e.siang + '</div></div>' +
-        ring + statusBadge(e.status) + '</div>';
+        '<div style="font-size:11px;color:var(--gray-400)">' + e.div + ' · Pagi: ' + (rec.pagi||'--') + ' | Siang: ' + (rec.siang||'--') + '</div></div>' +
+        ring + statusBadge(absenStatus) + '</div>';
     }).join('') + '</div>' +
     '<div class="card"><div class="card-head"><i class="ti ti-device-laptop" style="color:var(--green)"></i><h2>Status Hubstaff Tim</h2></div>' +
     timku.map(function(e) {
-      var on = e.status!=='cabut'&&e.status!=='belum';
+      var on = e.status !== 'cabut'; // Hubstaff aktif = akun tidak dicabut (status permanen)
       return '<div class="hubs-bar">' +
         '<div class="hubs-dot ' + (on?'hubs-active':'hubs-off') + '"></div>' +
         '<div style="flex:1;font-size:13px;font-weight:500">' + e.name + '</div>' +
@@ -2480,7 +2555,7 @@ function buildKARY(id) {
   var siangDone = !!attend.siang;
   var pagiTime  = attend.pagi || '--:--';
   var siangTime = attend.siang || '--:--';
-  var myEmp  = DB.employees.find(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); }) || {};
+  var myEmp  = DB.employees.find(function(e){ return e.email===currentUser.email; }) || {};
 
   if (id === 'beranda') {
     var jam = new Date().getHours();
@@ -2489,21 +2564,11 @@ function buildKARY(id) {
       '<div class="hero-card">' +
         '<div class="hero-name">Selamat ' + sapa + ', ' + currentUser.name.split(' ')[0] + '! 👋</div>' +
         '<div class="hero-role">Karyawan · ' + (myEmp.div||'') + ' · Koordinator: ' + (myEmp.koor||'') + '</div>' +
-        (function(){
-          var encEm2 = currentUser.email.toLowerCase().replace(/[.#$\[\]]/g,'_');
-          var thisMonth2 = new Date().toISOString().slice(0,7);
-          var hariHadir = Object.keys(DB.attendance).filter(function(k){
-            if (!k.startsWith(encEm2+'_')) return false;
-            if (k.indexOf(thisMonth2)<0) return false;
-            var r = DB.attendance[k];
-            return r.pagi && r.siang;
-          }).length;
-          return '<div class="hero-stats">' +
-            '<div class="hero-stat"><div class="hs-val">' + hariHadir + '</div><div class="hs-lbl">Hari Hadir</div></div>' +
-            '<div class="hero-stat"><div class="hs-val">' + (myEmp.pelanggaran||0) + '</div><div class="hs-lbl">Pelanggaran</div></div>' +
-            '<div class="hero-stat"><div class="hs-val">' + (myEmp.skor||'—') + '</div><div class="hs-lbl">Avg Skor</div></div>' +
-          '</div>';
-        })() +
+        '<div class="hero-stats">' +
+          '<div class="hero-stat"><div class="hs-val">21</div><div class="hs-lbl">Hari Hadir</div></div>' +
+          '<div class="hero-stat"><div class="hs-val">' + (myEmp.pelanggaran||0) + '</div><div class="hs-lbl">Pelanggaran</div></div>' +
+          '<div class="hero-stat"><div class="hs-val">' + (myEmp.skor||'—') + '</div><div class="hs-lbl">Avg Skor</div></div>' +
+        '</div>' +
       '</div>' +
       '<div class="card"><div class="card-head"><i class="ti ti-timeline"></i><h2>Alur Harian WFA</h2></div>' +
         '<div class="timeline">' +
@@ -2749,7 +2814,7 @@ function buildKARY(id) {
 
   if (id === 'riwayat') {
     // attendKey encode email, jadi kita cari dengan encoded key
-    var encEmail = currentUser.email.toLowerCase().replace(/[.#$\[\]]/g,'_');
+    var encEmail = currentUser.email.replace(/[.#$\[\]]/g,'_');
     var allKeys  = Object.keys(DB.attendance).filter(function(k){
       return k.startsWith(encEmail + '_');
     }).sort().reverse();
@@ -3134,11 +3199,9 @@ function hapusDataAbsensiFilter() {
         deleted++;
       }
     });
-    // Reset status karyawan
-    emp.status = 'belum';
-    emp.pagi   = '--';
-    emp.siang  = '--';
-    emp.skor   = null;
+    // Reset status permanen karyawan ke 'aktif' (bukan 'belum' — 
+    // status absensi harian sekarang dibaca dari DB.attendance, bukan DB.employees)
+    emp.status = 'aktif';
   });
 
   dbSaveLocal(DB);
@@ -3228,17 +3291,16 @@ function karyAbsenPagi() {
   DB.attendance[aKey].status = late?'terlambat':'hadir';
   DB.attendance[aKey].gps    = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
   var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
-  if (empIdx>=0) { DB.employees[empIdx].status=late?'terlambat':'hadir'; DB.employees[empIdx].pagi=ts; }
+  // CATATAN: tidak perlu lagi tulis status/pagi ke DB.employees — dashboard
+  // sekarang membaca langsung dari DB.attendance[hari ini], lebih akurat
   hitungSkorHarian(currentUser.email, aKey);
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
   var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
-  // BUGFIX: kasih tahu karyawan secara jujur kalau absennya GAGAL terkirim ke server,
-  // jangan biarkan mereka mengira sudah tercatat padahal koneksi gagal
-  Promise.all([p1, p2]).catch(function(){
+  // BUGFIX: kasih tahu karyawan secara jujur kalau absennya GAGAL terkirim ke server
+  p1.catch(function(){
     showToast('⚠️ Absen pagi tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
   });
 
@@ -3256,14 +3318,13 @@ function karyAbsenSiang() {
   DB.attendance[aKey].siang = ts;
   DB.attendance[aKey].gps_siang = gpsCoords ? (gpsCoords.lat.toFixed(5)+', '+gpsCoords.lng.toFixed(5)) : 'GPS tidak tersedia';
   var empIdx = DB.employees.findIndex(function(e){ return (e.email||'').toLowerCase()===currentUser.email.toLowerCase(); });
-  if (empIdx>=0) DB.employees[empIdx].siang = ts;
+  // CATATAN: tidak perlu lagi tulis siang ke DB.employees — dashboard membaca dari DB.attendance
 
   // BUGFIX: Simpan granular per path agar tidak menimpa absen karyawan lain (race condition)
   dbSaveLocal(DB);
   var p1 = dbSavePath('attendance/' + aKey, cleanForFirebase(DB.attendance[aKey]));
-  var p2 = empIdx>=0 ? dbSavePath('employees/' + empIdx, cleanForFirebase(DB.employees[empIdx])) : Promise.resolve();
   if (bc) bc.postMessage({ type:'update', data: DB });
-  Promise.all([p1, p2]).catch(function(){
+  p1.catch(function(){
     showToast('⚠️ Absen siang tersimpan di perangkat ini, tapi GAGAL terkirim ke server. Periksa koneksi internet Anda, lalu muat ulang halaman ini agar dicoba kirim lagi.', 'error');
   });
 
@@ -3832,7 +3893,7 @@ function addKaryawan() {
     id: Date.now(), name: nama,
     inits: nama.split(' ').map(function(x){ return x[0]||''; }).join('').slice(0,2).toUpperCase(),
     div: div, koor: koor, email: email, bg: bg,
-    status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+    status:'aktif', pelanggaran:0
   });
   dbSaveLocal(DB);
   dbSavePath('employees', cleanForFirebase(DB.employees)); // BUGFIX: jangan timpa seluruh DB
@@ -3853,12 +3914,16 @@ function addKaryawan() {
 function ubahStatusKaryawan(id) {
   var idx = DB.employees.findIndex(function(e){ return e.id===id; });
   if (idx<0) return;
-  var statuses = ['hadir','terlambat','belum','cabut'];
-  var cur = statuses.indexOf(DB.employees[idx].status);
-  DB.employees[idx].status = statuses[(cur+1)%statuses.length];
+  // BUGFIX: status di DB.employees adalah status PERMANEN akun (aktif/cabut).
+  // Status hadir/terlambat/belum hanya boleh datang dari absensi nyata di DB.attendance,
+  // bukan diubah manual dari sini — jadi siklus hanya antara 'aktif' dan 'cabut'.
+  // (Sebelumnya siklus mencakup 'hadir','terlambat','belum','cabut' yang menyebabkan
+  // dashboard menampilkan status palsu dari DB.employees, bukan dari attendance hari ini.)
+  var cur = DB.employees[idx].status;
+  DB.employees[idx].status = (cur === 'cabut') ? 'aktif' : 'cabut';
   dbSaveLocal(DB);
-  dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx])); // BUGFIX: jangan timpa seluruh DB
-  showToast('Status '+DB.employees[idx].name+' diubah ke: '+DB.employees[idx].status,'info');
+  dbSavePath('employees/' + idx, cleanForFirebase(DB.employees[idx]));
+  showToast('Status ' + DB.employees[idx].name + ' diubah ke: ' + DB.employees[idx].status, 'info');
   showPage('hrd','karyawan');
 }
 
@@ -3989,6 +4054,116 @@ function hapusDivisi(idx) {
 
   showToast('Divisi "' + nama + '" dihapus dari daftar pilihan', 'warning');
   showPage('hrd','pengaturan');
+}
+
+// ==================== ARSIP DATA LAMA KE GOOGLE SHEETS ====================
+// Tujuan: memindahkan absen & to-do yang sudah lama keluar dari Firebase
+// supaya kuota gratis Firebase (Spark) tidak cepat habis. Data lama TIDAK
+// hilang — tetap bisa dibuka lewat link Google Sheets, hanya saja sudah
+// tidak ikut disinkronkan realtime oleh aplikasi ini lagi.
+
+// Default: arsipkan semua data SEBELUM 2 bulan yang lalu
+function defaultCutoffMonth() {
+  var d = new Date();
+  d.setMonth(d.getMonth() - 2);
+  return d.toISOString().slice(0,7); // 'YYYY-MM'
+}
+
+function simpanKonfigArsip() {
+  var url    = (document.getElementById('cfg-arsipUrl')?.value || '').trim();
+  var secret = (document.getElementById('cfg-arsipSecret')?.value || '').trim();
+  var link   = (document.getElementById('cfg-arsipSheetLink')?.value || '').trim();
+
+  DB.settings.archiveWebAppUrl = url;
+  DB.settings.archiveSecret    = secret;
+  DB.settings.archiveSheetUrl  = link;
+
+  dbSaveLocal(DB);
+  dbSavePath('settings', cleanForFirebase(DB.settings));
+  showToast('Konfigurasi arsip tersimpan', 'success');
+  showPage('hrd','pengaturan');
+}
+
+function arsipkanDataLama() {
+  var url    = DB.settings.archiveWebAppUrl;
+  var secret = DB.settings.archiveSecret;
+  if (!url || !secret) {
+    showToast('Isi & simpan URL Web App + Secret Key dahulu sebelum mengarsipkan', 'error');
+    return;
+  }
+
+  var cutoffMonth = document.getElementById('arsip-cutoff')?.value || defaultCutoffMonth();
+  var cutoffStr = cutoffMonth + '-01'; // arsipkan semua tanggal SEBELUM tanggal 1 bulan ini
+
+  // Kumpulkan baris arsip + daftar key yang akan dihapus dari Firebase
+  var attendanceArchive = [];
+  var todoArchive = [];
+  var attKeysToDelete = {};
+  var todoKeysToDelete = {};
+
+  Object.keys(DB.attendance).forEach(function(key) {
+    var tgl = key.slice(-10); // format key = encodedEmail_YYYY-MM-DD
+    if (tgl >= cutoffStr) return; // masih dalam rentang aktif, jangan diarsipkan
+    var email = emailFromAttendKey(key) || '';
+    var emp = DB.employees.find(function(e){ return (e.email||'').toLowerCase() === email.toLowerCase(); });
+    var rec = DB.attendance[key] || {};
+
+    attendanceArchive.push({
+      tanggal: tgl, email: email, nama: emp?emp.name:'', divisi: emp?emp.div:'', koordinator: emp?emp.koor:'',
+      jamPagi: rec.pagi||'', jamSiang: rec.siang||'', status: rec.status||'',
+      skorAbsen: rec.skorAbsen??'', skorTodo: rec.skorTodo??'', skorKomunikasi: rec.skorKomunikasi??'', skorAkhir: rec.skor??''
+    });
+    attKeysToDelete[key] = null;
+
+    var todos = (DB.todos[key]||[]).filter(function(t){ return t.task && t.task.trim(); });
+    todos.forEach(function(t) {
+      todoArchive.push({
+        tanggal: tgl, email: email, nama: emp?emp.name:'',
+        tugas: t.task||'', skor: t.score??'', koreksiKoor: t.koreksi_skor??'', komentarKoor: t.komentar_koor||''
+      });
+    });
+    if (DB.todos[key] !== undefined) todoKeysToDelete[key] = null;
+  });
+
+  if (!attendanceArchive.length) {
+    showToast('Tidak ada data sebelum ' + cutoffMonth + ' yang perlu diarsipkan', 'info');
+    return;
+  }
+
+  if (!confirm('Arsipkan ' + attendanceArchive.length + ' hari absensi (' + todoArchive.length + ' item to-do) sebelum ' + cutoffMonth + '?\n\nData ini akan dipindah ke Google Sheets lalu DIHAPUS dari Firebase untuk menghemat kuota. Lanjutkan?')) return;
+
+  var btn = document.getElementById('btn-arsipkan');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Mengarsipkan...'; }
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // hindari CORS preflight ke Apps Script
+    body: JSON.stringify({ secret: secret, attendance: attendanceArchive, todos: todoArchive })
+  })
+  .then(function(res){ return res.json(); })
+  .then(function(result) {
+    if (!result || !result.ok) throw new Error((result && result.error) || 'Web App menolak permintaan');
+
+    // Baru hapus dari Firebase SETELAH dipastikan tersimpan aman di Google Sheets
+    var p1 = Object.keys(attKeysToDelete).length ? dbUpdatePaths('attendance', attKeysToDelete) : Promise.resolve();
+    var p2 = Object.keys(todoKeysToDelete).length ? dbUpdatePaths('todos', todoKeysToDelete) : Promise.resolve();
+    return Promise.all([p1, p2]);
+  })
+  .then(function() {
+    Object.keys(attKeysToDelete).forEach(function(k){ delete DB.attendance[k]; });
+    Object.keys(todoKeysToDelete).forEach(function(k){ delete DB.todos[k]; });
+    dbSaveLocal(DB);
+    if (bc) bc.postMessage({ type:'update', data: DB });
+    showToast('✅ ' + attendanceArchive.length + ' hari absensi & ' + todoArchive.length + ' item to-do berhasil diarsipkan & dibersihkan dari Firebase', 'success');
+    showPage('hrd','pengaturan');
+  })
+  .catch(function(err) {
+    console.warn('Arsip gagal:', err);
+    showToast('⚠️ Gagal mengarsipkan: ' + err.message + '. Data TIDAK dihapus dari Firebase, aman, coba lagi.', 'error');
+  })
+  .finally(function() {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-archive"></i>Arsipkan & Bersihkan'; }
+  });
 }
 
 // ==================== ZOOM MEETING ====================
@@ -4387,7 +4562,7 @@ function exportCSVTemplate() {
   var csv = '\uFEFF' +
     'nama,email,password,divisi,koordinator,role\r\n' +
     'Budi Santoso,,pass1234,Marketing,' + koor1 + ',kary\r\n' +
-    'Siti Rahayu,,123456,,,kary\r\n' +
+    'Siti Rahayu,,123,,,kary\r\n' +
     'Ahmad Fauzi,,,,,kary';
   var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   var url  = URL.createObjectURL(blob);
@@ -4550,7 +4725,7 @@ function importCSV(input) {
           DB.employees.push({
             id: Date.now()+i, name:nama, inits:inits,
             div:divVal, koor:koorVal, email:email, bg:bg,
-            status:'belum', pagi:'--', siang:'--', skor:null, pelanggaran:0
+            status:'aktif', pelanggaran:0
           });
           USERS[email] = { name:nama, initials:inits, avBg:bg, avColor:'#fff', roles:[{pass:finalPass, role:'kary'}], setupDone:true };
           added++;
